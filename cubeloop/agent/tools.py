@@ -177,6 +177,14 @@ async def _resolve_tool_call(
         rewritten = ToolCall(
             id=tool_call.id, name=rewritten.name, arguments=rewritten.arguments
         )
+    turn_context = context.turn_execution_context
+    if turn_context is not None and turn_context.binding_for(rewritten.name) is None:
+        resolved_tool = next(
+            (tool for tool in context.tools or [] if tool.name == rewritten.name),
+            None,
+        )
+        if resolved_tool is not None:
+            context.turn_execution_context = turn_context.extend(resolved_tool)
     return rewritten, True, None
 
 
@@ -189,8 +197,12 @@ async def _prepare_tool_call(
     *,
     resolved: bool = False,
 ) -> _PreparedToolCall | _ImmediateOutcome:
-    tool = None
-    if context.tools:
+    turn_context = context.turn_execution_context
+    binding = (
+        turn_context.binding_for(tool_call.name) if turn_context is not None else None
+    )
+    tool = binding.tool if binding is not None else None
+    if tool is None and context.tools:
         for t in context.tools:
             if t.name == tool_call.name:
                 tool = t

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from typing import TYPE_CHECKING, Callable
 
 from cubeloop.agent.tools import execute_tool_calls
@@ -63,6 +64,9 @@ async def run_agent_loop(
         messages=list(context.messages) + list(prompts),
         tools=context.tools,
         extra=context.extra,
+        run_id=context.run_id,
+        attempt_id=context.attempt_id,
+        on_turn_context=context.on_turn_context,
     )
 
     await emit_event(emit, AgentStartEvent())
@@ -126,6 +130,9 @@ async def run_agent_loop_continue(
         messages=list(context.messages),
         tools=context.tools,
         extra=context.extra,
+        run_id=context.run_id,
+        attempt_id=context.attempt_id,
+        on_turn_context=context.on_turn_context,
     )
 
     await emit_event(emit, AgentStartEvent())
@@ -744,6 +751,47 @@ async def _stream_assistant_response(
     sp = context.system_prompt
     if transform_system_prompt:
         sp = await transform_system_prompt(sp, ctx=context, signal=options.signal)
+
+    turn_id = uuid.uuid4().hex
+    previous_on_model_attempt = options.on_model_attempt
+
+    async def _capture_model_attempt(model_spec) -> None:
+        from cubeloop.session.turn_execution_context import TurnExecutionContext
+
+        existing = context.turn_execution_context
+        if (
+            existing is None
+            or existing.turn_id != turn_id
+            or existing.model.id != model_spec.id
+            or existing.model.provider_id != model_spec.provider_id
+        ):
+            captured = TurnExecutionContext.capture(
+                turn_id=turn_id,
+                run_id=context.run_id or "",
+                attempt_id=context.attempt_id or "",
+                model=model_spec,
+                reasoning=options.reasoning,
+                system_prompt=sp,
+                messages=llm_messages,
+                tools=context.tools,
+                policy_revision=(
+                    str(context.extra["policy_revision"])
+                    if "policy_revision" in context.extra
+                    else None
+                ),
+            )
+            context.turn_id = turn_id
+            context.turn_execution_context = captured
+            if context.on_turn_context is not None:
+                callback_result = context.on_turn_context(captured)
+                if asyncio.iscoroutine(callback_result):
+                    await callback_result
+        if previous_on_model_attempt is not None:
+            callback_result = previous_on_model_attempt(model_spec)
+            if asyncio.iscoroutine(callback_result):
+                await callback_result
+
+    options = options.model_copy(update={"on_model_attempt": _capture_model_attempt})
 
     stream = await model.stream(
         llm_messages,

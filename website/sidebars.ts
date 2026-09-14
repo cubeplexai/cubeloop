@@ -75,6 +75,7 @@ const sidebars: SidebarsConfig = {
       link: { type: 'doc', id: 'api/index' },
       items: [
         'api/cubeloop-agent',
+        'api/cubeloop-session',
         'api/cubeloop-providers',
         'api/cubeloop-checkpointer',
         'api/cubeloop-middleware',

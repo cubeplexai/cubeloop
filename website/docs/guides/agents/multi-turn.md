@@ -51,6 +51,27 @@ sees it before its next response — it's not lost.
 - `"one-at-a-time"` (default) — one queued message per pickup point.
 - `"all"` — every queued message is drained at once.
 
+Service hosts that must correlate a queued message with durable storage can
+use the identified session API:
+
+```python
+from cubeloop import InputEnvelope
+
+receipt = agent.session.submit_input(
+    InputEnvelope(
+        input_id=client_message_id,
+        message=UserMessage(content=[TextContent(text=content)]),
+        mode="steer",
+    )
+)
+```
+
+`queued` means the in-memory queue accepted the message. It is not a durable
+acknowledgement. Subscribe to the session's `input_committed` event; its
+durability is `checkpoint` only after the message append succeeds. Steering
+and follow-up remain separate queues with their existing pickup points and
+batch policies.
+
 ## Queued follow-ups: `agent.follow_up()`
 
 `follow_up` is for *"after the current run, start a new turn with
@@ -133,16 +154,18 @@ async with SQLiteCheckpointer("conv.db") as cp:
     await agent.prompt("continue our chat")
 ```
 
-The `_extra` slot (an arbitrary `dict[str, Any]`) is also restored.
-Middleware that wants to persist per-thread state should write into
-`context.extra`; the checkpointer's `save_extra` is called at
-`agent_end`.
+The checkpoint `extra` mapping is also restored. Middleware that wants to
+persist per-thread state should write into `context.extra`; the checkpointer's
+`save_extra` is called at `agent_end`. Hosts should use
+`agent.session.state_context`, which is the stable live mapping, and
+`await agent.session.load_checkpoint()` when they need an explicit idle-time
+restore. Messages and extra are installed together, including checkpoints
+whose message list is empty.
 
 ## Common pitfalls
 
-- **`prompt()` while another `prompt()` is in flight** raises
-  `RuntimeError`. Use `steer()` or `follow_up()`, or `wait_for_idle()`
-  first.
+- **Starting any execution while another is in flight or finalizing** raises
+  `ExecutionBusy`. Use `steer()` or `follow_up()`, or `wait_for_idle()` first.
 - **`resume()` with last message = assistant and no queue** raises
   `"Cannot continue from message role: assistant"`. Either queue a
   follow-up first or call `prompt()` instead.

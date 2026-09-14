@@ -12,7 +12,7 @@ the rest of the docs become a lookup table.
 
 `Agent` is the stateful façade: you construct it with a provider, a
 model, optional tools, and optional middleware/checkpointer. You drive
-it through three methods:
+ordinary applications through three methods:
 
 - `await agent.prompt(message)` — start a new turn from a user message.
 - `await agent.resume()` — continue from the last persisted message
@@ -31,6 +31,31 @@ unsubscribe()
 
 Subscribers receive every `AgentEvent` the loop emits. They can be
 sync or async.
+
+Hosts that need explicit attempt outcomes use the same engine through
+`agent.session`:
+
+```python
+from cubeloop import PromptExecutionRequest
+
+result = await agent.session.execute(
+    PromptExecutionRequest(
+        run_id="run-42",
+        attempt_id="worker-attempt-1",
+        message="Continue the analysis",
+    )
+)
+
+if result.outcome == "suspended":
+    render_form(result.pending_request)
+elif result.outcome != "completed":
+    record_failure(result.error)
+```
+
+An execution session belongs to one `Agent` and runs attempts sequentially.
+It is not a distributed lock or a durable worker session. `ExecutionBusy`
+rejects overlapping `execute()` calls; applications still own admission,
+authorization, leases, and transport status.
 
 ## Tool
 
@@ -117,6 +142,14 @@ Streams and events are two layers:
 
 Subscribe to agent events for UI; for low-level token routing dig into
 `event.stream_event`. See [Streaming Events](../guides/agents/streaming).
+
+`agent.session.subscribe(...)` adds a host-facing layer. Every event is
+wrapped with `run_id`, `attempt_id`, and an attempt-local sequence number.
+The session also emits `input_committed` after an injected message has been
+appended to the checkpointer, and exactly one `execution_finished` for an
+accepted attempt. Mark a consumer `required=True` only when execution cannot
+continue safely without it; observer failures never change the execution
+outcome.
 
 ## Middleware
 
