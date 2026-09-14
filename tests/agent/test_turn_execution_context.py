@@ -7,12 +7,14 @@ from cubeloop import Agent
 from cubeloop.agent.types import AgentTool, AgentToolResult
 from cubeloop.providers.base import (
     AssistantMessage,
+    ReasoningControl,
     TextContent,
     ToolCall,
     UserMessage,
 )
 from cubeloop.providers.faux import FauxProvider
 from cubeloop.providers.fallback import FallbackBoundModel
+from cubeloop.session import TurnExecutionContext
 
 
 class _Args(BaseModel):
@@ -53,6 +55,8 @@ async def test_context_captures_transformed_request_as_immutable_view() -> None:
     with pytest.raises(TypeError):
         transformed.metadata["nested"] = {"v": 2}  # type: ignore[index]
     assert agent.state.messages[0].metadata == {}
+    with pytest.raises(AttributeError, match="missing"):
+        _ = transformed.content[0].missing
 
 
 @pytest.mark.asyncio
@@ -128,3 +132,34 @@ async def test_retry_reuses_context_and_fallback_captures_new_model_view() -> No
         ("fallback", "fallback-model"),
     ]
     assert contexts[0].turn_id == contexts[1].turn_id
+
+
+def test_turn_context_extension_is_immutable_and_rejects_rebinding() -> None:
+    async def execute(tool_call_id, args, *, signal=None, on_update=None):
+        del tool_call_id, args, signal, on_update
+        return AgentToolResult(content=[])
+
+    first = AgentTool(
+        name="work", description="work", parameters=_Args, execute=execute
+    )
+    replacement = AgentTool(
+        name="work", description="replacement", parameters=_Args, execute=execute
+    )
+    provider = FauxProvider(provider_id="faux")
+    context = TurnExecutionContext.capture(
+        turn_id="turn-1",
+        run_id="run-1",
+        attempt_id="attempt-1",
+        model=provider.model("faux-model").spec,
+        reasoning=ReasoningControl(),
+        system_prompt="",
+        messages=[],
+        tools=[],
+    )
+
+    extended = context.extend(first)
+    assert context.tools == ()
+    assert extended.binding_for("work") is not None
+    assert extended.extend(first) is extended
+    with pytest.raises(ValueError, match="already binds"):
+        extended.extend(replacement)

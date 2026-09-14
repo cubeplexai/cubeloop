@@ -228,7 +228,7 @@ class ExecutionSession:
                 raise TypeError(f"unsupported execution request: {type(request)!r}")
         except asyncio.CancelledError as exc:
             caught = exc
-        except BaseException as exc:
+        except Exception as exc:
             caught = exc
 
         try:

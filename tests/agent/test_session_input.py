@@ -130,3 +130,52 @@ def test_input_to_idle_session_is_closed() -> None:
     )
 
     assert receipt.status == "closed"
+
+
+@pytest.mark.asyncio
+async def test_follow_up_receipt_becomes_committed_in_memory() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def first_response(messages, model):
+        del messages, model
+        entered.set()
+        await release.wait()
+        return AssistantMessage(
+            content=[TextContent(text="first")], stop_reason="end_turn"
+        )
+
+    provider = FauxProvider(provider_id="faux")
+    provider.set_responses(
+        [
+            first_response,
+            AssistantMessage(
+                content=[TextContent(text="done")], stop_reason="end_turn"
+            ),
+        ]
+    )
+    agent = Agent(model=provider.model("faux-model"))
+    task = asyncio.create_task(
+        agent.session.execute(
+            PromptExecutionRequest(
+                run_id="run-1", attempt_id="attempt-1", message="start"
+            )
+        )
+    )
+    await asyncio.wait_for(entered.wait(), timeout=1)
+
+    receipt = agent.session.submit_input(
+        InputEnvelope(
+            input_id="follow-up-1",
+            message=UserMessage(content=[TextContent(text="one more thing")]),
+            mode="follow_up",
+        )
+    )
+    assert receipt.status == "queued"
+    assert agent.session.cancel_input("unknown").status == "closed"
+
+    release.set()
+    await task
+    committed = agent.session.cancel_input("follow-up-1")
+    assert committed.status == "committed"
+    assert committed.durability == "memory"
