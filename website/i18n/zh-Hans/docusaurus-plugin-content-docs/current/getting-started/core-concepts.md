@@ -11,7 +11,7 @@ CubeLoop 的全部能力可以归纳为六个概念。这一页读一遍,后面�
 ## Agent
 
 `Agent` 是有状态的门面：你用 provider、model、可选的工具、可选的
-middleware/checkpointer 构造它。然后通过三个方法驱动它：
+middleware/checkpointer 构造它。普通应用通过三个方法驱动它：
 
 - `await agent.prompt(message)` —— 用一条 user 消息开启新一轮。
 - `await agent.resume()` —— 从最后一条已持久化的消息继续（配合
@@ -29,6 +29,29 @@ unsubscribe()
 ```
 
 Subscriber 会收到循环发出的每一个 `AgentEvent`。可以是同步或异步函数。
+
+需要明确获知每次执行结果的宿主，可以通过 `agent.session` 使用同一套执行引擎：
+
+```python
+from cubeloop import PromptExecutionRequest
+
+result = await agent.session.execute(
+    PromptExecutionRequest(
+        run_id="run-42",
+        attempt_id="worker-attempt-1",
+        message="继续分析",
+    )
+)
+
+if result.outcome == "suspended":
+    render_form(result.pending_request)
+elif result.outcome != "completed":
+    record_failure(result.error)
+```
+
+一个执行会话属于一个 `Agent`，其中的多次尝试按顺序运行。它不是分布式锁，
+也不是持久化的 worker 会话。执行尚未结束时再次调用 `execute()` 会抛出
+`ExecutionBusy`；准入、权限校验、租约和传输层状态仍由应用负责。
 
 ## Tool
 
@@ -94,6 +117,12 @@ class Provider(Protocol):
 
 做 UI 订阅 Agent 事件；做底层 token 路由就钻 `event.stream_event`。
 见 [流式事件](../guides/agents/streaming)。
+
+`agent.session.subscribe(...)` 在此之上增加了面向宿主的事件层。每个事件都带有
+`run_id`、`attempt_id` 和本次尝试内单调递增的序号。注入的消息成功追加到
+checkpointer 后，会话会发出 `input_committed`；每次已接受的尝试只会发出一个
+`execution_finished`。只有在缺少某个消费者就无法安全继续执行时，才应将它标记为
+`required=True`；观察者发生故障不会改变执行结果。
 
 ## Middleware
 

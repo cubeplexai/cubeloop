@@ -84,6 +84,12 @@ async def transform_system_prompt(
 
 组合方式：链式。
 
+`transform_context`、`convert_to_llm` 和 `transform_system_prompt` 完成后，
+CubeLoop 会捕获一个只读的 `TurnExecutionContext`。它记录生成本轮请求的逻辑输入和
+具体工具绑定，但不会向模型输入中加入标识符。同一模型的传输重试复用这份快照；切换到
+fallback 模型时，会在同一个 turn 下创建一份新快照。工具调用会保留快照中的绑定，
+而 `before_tool_call` 仍会在实际执行时按当前状态完成权限和策略检查。
+
 ## `resolve_tool_call`
 
 ```python
