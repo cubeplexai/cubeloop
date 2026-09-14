@@ -41,6 +41,25 @@ async def main():
 - `"one-at-a-time"`（默认）—— 每个取出点只处理一条队列消息。
 - `"all"` —— 一次排空所有队列消息。
 
+需要把排队消息与持久化状态关联起来的服务宿主，可以使用带标识的会话 API：
+
+```python
+from cubeloop import InputEnvelope
+
+receipt = agent.session.submit_input(
+    InputEnvelope(
+        input_id=client_message_id,
+        message=UserMessage(content=[TextContent(text=content)]),
+        mode="steer",
+    )
+)
+```
+
+`queued` 只表示内存队列接收了这条消息，并不是持久化确认。订阅会话的
+`input_committed` 事件；只有消息成功追加后，其 durability 才会是
+`checkpoint`。steering 和 follow-up 仍使用彼此独立的队列，并保留各自原有的
+取出时机和批处理策略。
+
 ## 排队后续消息：`agent.follow_up()`
 
 `follow_up` 用于"当前运行结束后，以此内容开启新的轮次"。这是聊天 UI 的典型模式：用户在 assistant 还在响应时便开始输入。
@@ -106,11 +125,17 @@ async with SQLiteCheckpointer("conv.db") as cp:
     await agent.prompt("continue our chat")
 ```
 
-`_extra` 槽（一个任意的 `dict[str, Any]`）也会被恢复。希望持久化 per-thread 状态的 middleware 应将数据写入 `context.extra`；checkpointer 的 `save_extra` 会在 `agent_end` 时被调用。
+checkpoint 中的 `extra` 映射也会被恢复。希望持久化 per-thread 状态的
+middleware 应将数据写入 `context.extra`；checkpointer 的 `save_extra` 会在
+`agent_end` 时被调用。宿主应通过 `agent.session.state_context` 访问这个引用稳定的
+实时映射；需要在空闲时显式恢复状态，则调用
+`await agent.session.load_checkpoint()`。消息和 extra 会一起安装，即使 checkpoint
+中的消息列表为空也一样。
 
 ## 常见陷阱
 
-- **在另一个 `prompt()` 进行中时调用 `prompt()`** 会抛出 `RuntimeError`。请改用 `steer()` 或 `follow_up()`，或先调用 `wait_for_idle()`。
+- **前一次执行仍在运行或收尾时发起新执行** 会抛出 `ExecutionBusy`。请改用
+  `steer()` 或 `follow_up()`，或先调用 `wait_for_idle()`。
 - **`resume()` 时最后一条消息是 assistant 且队列为空** 会抛出 `"Cannot continue from message role: assistant"`。请先排队一条后续消息，或改用 `prompt()`。
 - **历史无限增长** —— 若没有 `transform_context` middleware，最终会触达 context 限制。请尽早规划截断/摘要策略。
 - **多个 agent 使用相同的 `thread_id`** —— 仅追加写入对顺序是安全的，但两个 agent 同时写入同一 thread 会导致消息交错。每个 thread 使用一个 agent 实例，或在应用层进行协调。
