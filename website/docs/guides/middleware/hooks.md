@@ -90,6 +90,15 @@ Fires **before each model call**, on the system prompt string. Use to:
 
 Composition: chained.
 
+After `transform_context`, `convert_to_llm`, and
+`transform_system_prompt` finish, CubeLoop captures a read-only
+`TurnExecutionContext`. It records the logical request and the concrete tool
+bindings that produced that turn without adding identifiers to model input.
+Transport retries of the same model reuse the capture; a fallback model gets
+a new capture under the same turn. Tool calls retain the binding from their
+capture, while `before_tool_call` still performs current authorization and
+policy checks at execution time.
+
 ## `resolve_tool_call`
 
 ```python

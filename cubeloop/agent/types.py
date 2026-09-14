@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Generic, Literal, TypeVar
+from typing import Any, Awaitable, Callable, Generic, Literal, TypeVar
 
 from pydantic import BaseModel
 
@@ -59,6 +59,11 @@ class AgentContext:
     messages: list[Message]
     tools: list[AgentTool] | None = None
     extra: JsonObject = field(default_factory=dict)
+    run_id: str | None = None
+    attempt_id: str | None = None
+    turn_id: str | None = None
+    turn_execution_context: Any = None
+    on_turn_context: Callable[[Any], Any] | None = None
 
 
 # --- Hook context types ---

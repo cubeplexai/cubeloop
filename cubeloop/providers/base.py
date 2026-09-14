@@ -634,6 +634,10 @@ def _detach(listeners: list, cb: Callable) -> None:
         pass
 
 
+OnModelAttemptCallback = Callable[[Model], Awaitable[None] | None]
+"""Called immediately before each concrete provider-model attempt."""
+
+
 class StreamOptions(BaseModel):
     """Options bag for Provider.stream(), transparent to the agent loop."""
 
@@ -643,6 +647,7 @@ class StreamOptions(BaseModel):
     signal: asyncio.Event | None = None
     on_payload: OnPayloadCallback | None = None
     on_response: OnResponseCallback | None = None
+    on_model_attempt: OnModelAttemptCallback | None = None
 
 
 async def invoke_on_payload(
@@ -883,6 +888,10 @@ class BoundModel:
         # the pre-BoundModel loop also called ``provider.stream(model,
         # messages, ...)`` positionally. The remaining args sit after
         # ``*`` in the protocol so they must stay keyword.
+        if options is not None and options.on_model_attempt is not None:
+            result = options.on_model_attempt(self.spec)
+            if inspect.isawaitable(result):
+                await result
         return await self.provider.stream(
             self.spec,
             messages,

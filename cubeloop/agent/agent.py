@@ -312,6 +312,10 @@ class Agent(Generic[TMessage]):
         self._active_signal: asyncio.Event | None = None
         self._active_done: asyncio.Event | None = None
         self._fallback_active_index: int = 0
+        self._checkpoint_loaded = messages is not None
+        from cubeloop.session import ExecutionSession
+
+        self.session = ExecutionSession(self)
 
     @property
     def state(self) -> AgentState:
@@ -480,6 +484,27 @@ class Agent(Generic[TMessage]):
         *,
         run_id: str | None = None,
     ) -> str:
+        from cubeloop.session import PromptExecutionRequest
+
+        self._validate_hitl_bindings(run_id, caller="prompt")
+        effective_run_id = run_id or uuid.uuid4().hex
+        result = await self.session.execute(
+            PromptExecutionRequest(
+                run_id=effective_run_id,
+                attempt_id=uuid.uuid4().hex,
+                message=message,
+            )
+        )
+        if result.error is not None and result.error.cause is not None:
+            raise result.error.cause
+        return effective_run_id
+
+    async def _execute_prompt(
+        self,
+        message: str | Message | list[Message],
+        *,
+        run_id: str | None = None,
+    ) -> str:
         # Fail-fast guard: if the run-lock is already held OR a stream is in
         # progress, raise immediately instead of queueing on the lock. This
         # makes two concurrent cold prompt() calls fail-fast deterministically
@@ -529,13 +554,13 @@ class Agent(Generic[TMessage]):
                     messages = [message]
 
                 # Restore history and extra from checkpointer if this is first prompt
-                if self.checkpointer and self.thread_id and not self._state._messages:
+                if self.checkpointer and self.thread_id and not self._checkpoint_loaded:
                     data = await self.checkpointer.load(self.thread_id)
                     if data:
-                        if data.messages:
-                            self._state._messages = list(data.messages)
+                        self._state._messages = list(data.messages)
                         self._extra.clear()
                         self._extra.update(data.extra)
+                    self._checkpoint_loaded = True
 
                 await self._run_prompt(messages)
         except BaseException:
@@ -695,6 +720,20 @@ class Agent(Generic[TMessage]):
         )
 
     async def resume(self, *, run_id: str | None = None) -> str:
+        from cubeloop.session import ContinueExecutionRequest
+
+        effective_run_id = run_id or uuid.uuid4().hex
+        result = await self.session.execute(
+            ContinueExecutionRequest(
+                run_id=effective_run_id,
+                attempt_id=uuid.uuid4().hex,
+            )
+        )
+        if result.error is not None and result.error.cause is not None:
+            raise result.error.cause
+        return effective_run_id
+
+    async def _execute_continue(self, *, run_id: str | None = None) -> str:
         # Same fail-fast pattern as prompt(): lock.locked() is the atomic gate.
         if self._run_lock.locked() or self._state.is_streaming:
             raise RuntimeError(
@@ -844,6 +883,9 @@ class Agent(Generic[TMessage]):
             messages=list(self._state._messages),
             tools=list(self._state._tools),
             extra=self._extra,
+            run_id=self._state.active_run_id,
+            attempt_id=self.session.active_attempt_id,
+            on_turn_context=self.session._capture_turn_context,
         )
 
     async def detach(self) -> None:
@@ -876,6 +918,29 @@ class Agent(Generic[TMessage]):
     async def respond(
         self, *, question_id: str | None = None, answer: StructuredValue
     ) -> None:
+        from cubeloop.session import RespondExecutionRequest
+
+        recovered_run_id: str | None = None
+        if self.checkpointer is not None and self.thread_id is not None:
+            load_pending = getattr(self.checkpointer, "load_pending", None)
+            if load_pending is not None:
+                loaded = await load_pending(self.thread_id)
+                if loaded is not None:
+                    recovered_run_id = loaded[1]
+        result = await self.session.execute(
+            RespondExecutionRequest(
+                run_id=recovered_run_id or uuid.uuid4().hex,
+                attempt_id=uuid.uuid4().hex,
+                question_id=question_id,
+                answer=answer,
+            )
+        )
+        if result.error is not None and result.error.cause is not None:
+            raise result.error.cause
+
+    async def _execute_respond(
+        self, *, question_id: str | None = None, answer: StructuredValue
+    ) -> None:
         from cubeloop.hitl.exceptions import (
             HitlNoPendingRequest,
             HitlStaleAnswer,
@@ -899,12 +964,13 @@ class Agent(Generic[TMessage]):
             )
 
         async with self._run_lock:
-            if not self._state._messages:
+            if not self._checkpoint_loaded:
                 data = await self.checkpointer.load(self.thread_id)
                 if data:
                     self._state._messages = list(data.messages or [])
                     self._extra.clear()
                     self._extra.update(data.extra or {})
+                self._checkpoint_loaded = True
 
             loaded = await load_pending(self.thread_id)
             if loaded is None:
@@ -1293,6 +1359,7 @@ class Agent(Generic[TMessage]):
             if self.checkpointer and self.thread_id:
                 await self.checkpointer.save_extra(self.thread_id, self._extra)
 
+        await self.session._publish_agent_event(event)
         await self._emit_to_listeners(event)
 
     async def _emit_to_listeners(self, event: AgentEvent) -> None:

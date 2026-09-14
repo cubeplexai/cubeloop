@@ -41,12 +41,13 @@ from griffe import AliasResolutionError
 
 MODULES = [
     ("cubeloop.agent",        "Agents",        1),
-    ("cubeloop.providers",    "Providers",     2),
-    ("cubeloop.checkpointer", "Checkpointing", 3),
-    ("cubeloop.middleware",   "Middleware",    4),
-    ("cubeloop.mcp",          "MCP",           5),
-    ("cubeloop.tracing",      "Tracing",       6),
-    ("cubeloop.utils",        "Utils",         7),
+    ("cubeloop.session",      "Execution",     2),
+    ("cubeloop.providers",    "Providers",     3),
+    ("cubeloop.checkpointer", "Checkpointing", 4),
+    ("cubeloop.middleware",   "Middleware",    5),
+    ("cubeloop.mcp",          "MCP",           6),
+    ("cubeloop.tracing",      "Tracing",       7),
+    ("cubeloop.utils",        "Utils",         8),
 ]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
