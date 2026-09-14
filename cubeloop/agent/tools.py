@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import time
 from dataclasses import dataclass
@@ -184,7 +185,12 @@ async def _resolve_tool_call(
             None,
         )
         if resolved_tool is not None:
-            context.turn_execution_context = turn_context.extend(resolved_tool)
+            extended = turn_context.extend(resolved_tool)
+            context.turn_execution_context = extended
+            if context.on_turn_context is not None:
+                callback_result = context.on_turn_context(extended)
+                if inspect.isawaitable(callback_result):
+                    await callback_result
     return rewritten, True, None
 
 

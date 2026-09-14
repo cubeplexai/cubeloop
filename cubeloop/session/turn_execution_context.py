@@ -5,7 +5,7 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 from cubeloop.agent.types import AgentTool
-from cubeloop.providers.base import Message, Model, ReasoningControl, ToolDefinition
+from cubeloop.providers.base import Message, Model, ReasoningControl
 
 
 def _freeze(value: Any) -> Any:
@@ -35,21 +35,35 @@ class MessageView:
     content: tuple[FrozenObject, ...]
     metadata: Mapping[str, Any]
     run_id: str | None
+    _values: Mapping[str, Any]
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self._values[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
 
     @classmethod
     def capture(cls, message: Message) -> MessageView:
+        values = MappingProxyType(
+            {
+                name: _freeze(getattr(message, name))
+                for name in type(message).model_fields
+            }
+        )
         return cls(
-            role=message.role,
-            content=tuple(_freeze(item) for item in message.content),
-            metadata=_freeze(message.metadata),
-            run_id=message.run_id,
+            role=values["role"],
+            content=values["content"],
+            metadata=values["metadata"],
+            run_id=values["run_id"],
+            _values=values,
         )
 
 
 @dataclass(frozen=True)
 class ToolExecutionBinding:
     name: str
-    definition: ToolDefinition
+    definition: FrozenObject
     tool: AgentTool
 
 
@@ -58,8 +72,8 @@ class TurnExecutionContext:
     turn_id: str
     run_id: str
     attempt_id: str
-    model: Model
-    reasoning: ReasoningControl
+    model: FrozenObject
+    reasoning: FrozenObject
     system_prompt: str
     messages: tuple[MessageView, ...]
     tools: tuple[ToolExecutionBinding, ...]
@@ -83,14 +97,14 @@ class TurnExecutionContext:
             turn_id=turn_id,
             run_id=run_id,
             attempt_id=attempt_id,
-            model=model.model_copy(deep=True),
-            reasoning=reasoning.model_copy(deep=True),
+            model=_freeze(model),
+            reasoning=_freeze(reasoning),
             system_prompt=system_prompt,
             messages=tuple(MessageView.capture(message) for message in messages),
             tools=tuple(
                 ToolExecutionBinding(
                     name=tool.name,
-                    definition=tool.to_definition().model_copy(deep=True),
+                    definition=_freeze(tool.to_definition()),
                     tool=tool,
                 )
                 for tool in tools or []
@@ -111,7 +125,7 @@ class TurnExecutionContext:
             return self
         binding = ToolExecutionBinding(
             name=tool.name,
-            definition=tool.to_definition().model_copy(deep=True),
+            definition=_freeze(tool.to_definition()),
             tool=tool,
         )
         return replace(self, tools=(*self.tools, binding))

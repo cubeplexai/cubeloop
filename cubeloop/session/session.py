@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from cubeloop.agent._tool_cycle import ToolCycleViolation, check_tool_cycle
-from cubeloop.agent.types import MessageEndEvent
+from cubeloop.agent.types import AgentEndEvent, MessageEndEvent
 from cubeloop.checkpointer.base import CheckpointData
 from cubeloop.session.events import (
     ExecutionEventEnvelope,
@@ -61,6 +61,10 @@ class _RequiredConsumerError(RuntimeError):
     pass
 
 
+class _ConsumerClosedError(RuntimeError):
+    pass
+
+
 _INPUT_DEDUP_CAPACITY = 4096
 
 
@@ -72,7 +76,10 @@ class ExecutionSession:
         self._active_attempt_id: str | None = None
         self._active_run_id: str | None = None
         self._cancel_requested = False
+        self._accepting_input = False
         self._seq = 0
+        self._publish_lock = asyncio.Lock()
+        self._required_delivery_failure: DeliveryError | None = None
         self._consumers: list[_Consumer] = []
         self._input_status: dict[str, InputStatus] = {}
         self._delivery_errors: list[DeliveryError] = []
@@ -87,6 +94,15 @@ class ExecutionSession:
         return tuple(self._turn_contexts)
 
     def _capture_turn_context(self, context: TurnExecutionContext) -> None:
+        for index in range(len(self._turn_contexts) - 1, -1, -1):
+            existing = self._turn_contexts[index]
+            if (
+                existing.turn_id == context.turn_id
+                and existing.model.id == context.model.id
+                and existing.model.provider_id == context.model.provider_id
+            ):
+                self._turn_contexts[index] = context
+                return
         self._turn_contexts.append(context)
 
     @property
@@ -158,8 +174,17 @@ class ExecutionSession:
     def submit_input(self, envelope: InputEnvelope) -> InputReceipt:
         existing = self._input_status.get(envelope.input_id)
         if existing is not None:
-            return InputReceipt(input_id=envelope.input_id, status=existing)
-        if self._active_attempt_id is None:
+            durability: InputDurability | None = None
+            if existing == "committed":
+                durability = (
+                    "checkpoint" if self._has_durable_checkpoint() else "memory"
+                )
+            return InputReceipt(
+                input_id=envelope.input_id,
+                status=existing,
+                durability=durability,
+            )
+        if not self._accepting_input:
             return InputReceipt(input_id=envelope.input_id, status="closed")
         if len(self._input_status) >= _INPUT_DEDUP_CAPACITY:
             return InputReceipt(input_id=envelope.input_id, status="closed")
@@ -167,7 +192,7 @@ class ExecutionSession:
         metadata = dict(envelope.message.metadata)
         metadata["input_id"] = envelope.input_id
         metadata["input_mode"] = envelope.mode
-        metadata.setdefault("steer_id", envelope.input_id)
+        metadata["steer_id"] = envelope.input_id
         message = envelope.message.model_copy(update={"metadata": metadata})
         if envelope.mode == "steer":
             self._agent.steer(message)
@@ -207,8 +232,10 @@ class ExecutionSession:
         self._active_attempt_id = request.attempt_id
         self._active_run_id = request.run_id
         self._cancel_requested = False
+        self._accepting_input = True
         self._seq = 0
         self._delivery_errors = []
+        self._required_delivery_failure = None
         self._input_status.clear()
         self._turn_contexts.clear()
         caught: BaseException | None = None
@@ -221,6 +248,7 @@ class ExecutionSession:
                 await self._agent._execute_respond(
                     question_id=request.question_id,
                     answer=request.answer,
+                    expected_run_id=request.run_id,
                 )
             elif isinstance(request, ContinueExecutionRequest):
                 await self._agent._execute_continue(run_id=request.run_id)
@@ -230,9 +258,26 @@ class ExecutionSession:
             caught = exc
         except Exception as exc:
             caught = exc
+        finally:
+            self._accepting_input = False
 
         try:
-            result = await self._settle(request, caught)
+            try:
+                result = await self._settle(request, caught)
+            except Exception as exc:
+                result = ExecutionResult(
+                    run_id=request.run_id,
+                    attempt_id=request.attempt_id,
+                    outcome="failed",
+                    error=ExecutionError(
+                        kind="finalization",
+                        message=str(exc),
+                        cause=exc,
+                    ),
+                    checkpoint_committed=False,
+                    history_consistent=False,
+                    delivery_errors=tuple(self._delivery_errors),
+                )
             final_errors = await self._publish(
                 ExecutionFinished(result=result), terminal=True
             )
@@ -249,6 +294,8 @@ class ExecutionSession:
     async def _publish_agent_event(self, event: SessionEvent) -> None:
         if self._active_attempt_id is None:
             return
+        if isinstance(event, AgentEndEvent):
+            self._accepting_input = False
         await self._publish(event, terminal=False)
         if not isinstance(event, MessageEndEvent):
             return
@@ -273,6 +320,20 @@ class ExecutionSession:
         *,
         terminal: bool,
     ) -> list[DeliveryError]:
+        async with self._publish_lock:
+            return await self._publish_serialized(event, terminal=terminal)
+
+    async def _publish_serialized(
+        self,
+        event: SessionEvent,
+        *,
+        terminal: bool,
+    ) -> list[DeliveryError]:
+        if not terminal and self._required_delivery_failure is not None:
+            failure = self._required_delivery_failure
+            raise _RequiredConsumerError(
+                f"required consumer {failure.consumer} failed: {failure.message}"
+            )
         self._seq += 1
         envelope = ExecutionEventEnvelope(
             run_id=self._active_run_id or "",
@@ -322,6 +383,7 @@ class ExecutionSession:
                     required_failure = diagnostic
         self._delivery_errors.extend(errors)
         if required_failure is not None:
+            self._required_delivery_failure = required_failure
             raise _RequiredConsumerError(
                 f"required consumer {required_failure.consumer} failed: "
                 f"{required_failure.message}"
@@ -337,7 +399,9 @@ class ExecutionSession:
                     await value
             except asyncio.CancelledError:
                 if not item.acknowledged.done():
-                    item.acknowledged.cancel()
+                    item.acknowledged.set_exception(
+                        _ConsumerClosedError("consumer task was cancelled")
+                    )
                 raise
             except BaseException as exc:
                 if not item.acknowledged.done():
@@ -417,7 +481,10 @@ class ExecutionSession:
             )
             error = ExecutionError(kind="execution", message=message)
 
-        checkpoint_committed = outcome in {"completed", "suspended"}
+        checkpoint_committed = self._has_durable_checkpoint() and outcome in {
+            "completed",
+            "suspended",
+        }
         return ExecutionResult(
             run_id=request.run_id,
             attempt_id=request.attempt_id,
