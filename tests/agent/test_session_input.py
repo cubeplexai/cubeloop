@@ -179,3 +179,58 @@ async def test_follow_up_receipt_becomes_committed_in_memory() -> None:
     committed = agent.session.cancel_input("follow-up-1")
     assert committed.status == "committed"
     assert committed.durability == "memory"
+    duplicate = agent.session.submit_input(
+        InputEnvelope(
+            input_id="follow-up-1",
+            message=UserMessage(content=[TextContent(text="duplicate")]),
+            mode="follow_up",
+        )
+    )
+    assert duplicate.status == "committed"
+    assert duplicate.durability == "memory"
+
+
+@pytest.mark.asyncio
+async def test_session_input_id_overrides_caller_steering_key() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def response(messages, model):
+        del messages, model
+        entered.set()
+        await release.wait()
+        return AssistantMessage(
+            content=[TextContent(text="done")], stop_reason="end_turn"
+        )
+
+    provider = FauxProvider(provider_id="faux")
+    provider.set_responses([response])
+    agent = Agent(model=provider.model("faux-model"))
+    task = asyncio.create_task(
+        agent.session.execute(
+            PromptExecutionRequest(
+                run_id="run-1", attempt_id="attempt-1", message="start"
+            )
+        )
+    )
+    await asyncio.wait_for(entered.wait(), timeout=1)
+
+    receipt = agent.session.submit_input(
+        InputEnvelope(
+            input_id="owned-id",
+            message=UserMessage(
+                content=[TextContent(text="cancel")],
+                metadata={"steer_id": "caller-id"},
+            ),
+            mode="steer",
+        )
+    )
+    assert receipt.status == "queued"
+    assert agent.session.cancel_input("owned-id").status == "cancelled"
+
+    release.set()
+    await task
+    assert not any(
+        message.metadata.get("input_id") == "owned-id"
+        for message in agent.state.messages
+    )

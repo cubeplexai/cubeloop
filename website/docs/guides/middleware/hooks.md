@@ -99,6 +99,12 @@ a new capture under the same turn. Tool calls retain the binding from their
 capture, while `before_tool_call` still performs current authorization and
 policy checks at execution time.
 
+The concrete binding is retained in memory for the current execution process.
+CubeLoop does not checkpoint the full `TurnExecutionContext`; after durable
+HITL is resumed in a new process, tools are resolved from that Agent's restored
+catalog. Hosts that deploy tool implementations independently must pin or
+version that catalog across suspended runs.
+
 ## `resolve_tool_call`
 
 ```python

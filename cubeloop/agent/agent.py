@@ -367,6 +367,7 @@ class Agent(Generic[TMessage]):
         self._state.error_message = None
         self._steering_queue.clear()
         self._follow_up_queue.clear()
+        self._checkpoint_loaded = False
 
     def _outcome_sink(self) -> Callable[[str], None]:
         def _sink(value: str) -> None:
@@ -939,7 +940,11 @@ class Agent(Generic[TMessage]):
             raise result.error.cause
 
     async def _execute_respond(
-        self, *, question_id: str | None = None, answer: StructuredValue
+        self,
+        *,
+        question_id: str | None = None,
+        answer: StructuredValue,
+        expected_run_id: str | None = None,
     ) -> None:
         from cubeloop.hitl.exceptions import (
             HitlNoPendingRequest,
@@ -976,6 +981,15 @@ class Agent(Generic[TMessage]):
             if loaded is None:
                 raise HitlNoPendingRequest("no pending request on this thread")
             pending, recovered_run_id = loaded
+            if (
+                recovered_run_id is not None
+                and expected_run_id is not None
+                and recovered_run_id != expected_run_id
+            ):
+                raise ValueError(
+                    f"respond run_id={expected_run_id!r} does not match "
+                    f"pending run_id={recovered_run_id!r}"
+                )
             if question_id is None:
                 question_id = pending.question_id
             if question_id != pending.question_id:

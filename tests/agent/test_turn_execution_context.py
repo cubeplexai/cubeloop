@@ -4,12 +4,16 @@ import pytest
 from pydantic import BaseModel
 
 from cubeloop import Agent
-from cubeloop.agent.types import AgentTool, AgentToolResult
+from dataclasses import FrozenInstanceError
+
+from cubeloop.agent.tools import execute_tool_calls
+from cubeloop.agent.types import AgentContext, AgentTool, AgentToolResult
 from cubeloop.providers.base import (
     AssistantMessage,
     ReasoningControl,
     TextContent,
     ToolCall,
+    ToolResultMessage,
     UserMessage,
 )
 from cubeloop.providers.faux import FauxProvider
@@ -57,6 +61,10 @@ async def test_context_captures_transformed_request_as_immutable_view() -> None:
     assert agent.state.messages[0].metadata == {}
     with pytest.raises(AttributeError, match="missing"):
         _ = transformed.content[0].missing
+    with pytest.raises(FrozenInstanceError):
+        context.model.id = "changed"
+    with pytest.raises(FrozenInstanceError):
+        context.reasoning.mode = "on"
 
 
 @pytest.mark.asyncio
@@ -163,3 +171,79 @@ def test_turn_context_extension_is_immutable_and_rejects_rebinding() -> None:
     assert extended.extend(first) is extended
     with pytest.raises(ValueError, match="already binds"):
         extended.extend(replacement)
+    with pytest.raises(FrozenInstanceError):
+        extended.tools[0].definition.description = "changed"
+
+
+def test_message_view_preserves_tool_result_request_fields() -> None:
+    provider = FauxProvider(provider_id="faux")
+    context = TurnExecutionContext.capture(
+        turn_id="turn-1",
+        run_id="run-1",
+        attempt_id="attempt-1",
+        model=provider.model("faux-model").spec,
+        reasoning=ReasoningControl(),
+        system_prompt="",
+        messages=[
+            ToolResultMessage(
+                tool_call_id="call-1",
+                tool_name="work",
+                content=[TextContent(text="failed")],
+                details={"code": "denied"},
+                is_error=True,
+            )
+        ],
+        tools=[],
+    )
+
+    message = context.messages[0]
+    assert message.tool_call_id == "call-1"
+    assert message.tool_name == "work"
+    assert message.is_error is True
+    assert message.details["code"] == "denied"
+
+
+@pytest.mark.asyncio
+async def test_resolved_tool_extension_updates_public_session_context() -> None:
+    async def execute(tool_call_id, args, *, signal=None, on_update=None):
+        del tool_call_id, args, signal, on_update
+        return AgentToolResult(content=[TextContent(text="done")])
+
+    tool = AgentTool(name="work", description="work", parameters=_Args, execute=execute)
+    provider = FauxProvider(provider_id="faux")
+    agent = Agent(model=provider.model("faux-model"))
+    captured = TurnExecutionContext.capture(
+        turn_id="turn-1",
+        run_id="run-1",
+        attempt_id="attempt-1",
+        model=provider.model("faux-model").spec,
+        reasoning=ReasoningControl(),
+        system_prompt="",
+        messages=[],
+        tools=[],
+    )
+    agent.session._capture_turn_context(captured)
+    context = AgentContext(
+        system_prompt="",
+        messages=[],
+        tools=[tool],
+        turn_execution_context=captured,
+        on_turn_context=agent.session._capture_turn_context,
+    )
+
+    async def resolve(call, *, context, signal=None):
+        del context, signal
+        return call.model_copy(update={"name": "work"})
+
+    await execute_tool_calls(
+        context,
+        AssistantMessage(
+            content=[ToolCall(id="call-1", name="alias", arguments={"value": "x"})],
+            stop_reason="tool_use",
+        ),
+        resolve_tool_call=resolve,
+        emit=lambda event: None,
+    )
+
+    assert len(agent.session.turn_contexts) == 1
+    assert agent.session.turn_contexts[0].binding_for("work") is not None

@@ -7,11 +7,14 @@ import pytest
 from cubeloop import Agent
 from cubeloop.checkpointer.base import CheckpointData
 from cubeloop.checkpointer.memory import MemoryCheckpointer
+from cubeloop.hitl.channel import CheckpointedChannel
+from cubeloop.hitl.types import ConfirmRequest, HitlRequest
 from cubeloop.providers.base import AssistantMessage, TextContent, UserMessage
 from cubeloop.providers.faux import FauxProvider
 from cubeloop.session import (
     ExecutionBusy,
     PromptExecutionRequest,
+    RespondExecutionRequest,
 )
 
 
@@ -41,6 +44,89 @@ async def test_execute_returns_explicit_completed_result() -> None:
     assert result.outcome == "completed"
     assert result.error is None
     assert result.history_consistent is True
+    assert result.checkpoint_committed is False
+
+
+@pytest.mark.asyncio
+async def test_completed_checkpointed_attempt_reports_committed() -> None:
+    agent = Agent(
+        model=_provider(_answer()).model("faux-model"),
+        checkpointer=MemoryCheckpointer(),
+        thread_id="thread-1",
+    )
+
+    result = await agent.session.execute(
+        PromptExecutionRequest(run_id="run-1", attempt_id="attempt-1", message="hi")
+    )
+
+    assert result.outcome == "completed"
+    assert result.checkpoint_committed is True
+
+
+@pytest.mark.asyncio
+async def test_settlement_failure_returns_result_and_terminal_event() -> None:
+    class BrokenPendingCheckpointer(MemoryCheckpointer):
+        async def load_pending(self, thread_id: str):
+            del thread_id
+            raise RuntimeError("pending storage unavailable")
+
+    agent = Agent(
+        model=_provider(_answer()).model("faux-model"),
+        checkpointer=BrokenPendingCheckpointer(),
+        thread_id="thread-1",
+    )
+    events = []
+    agent.session.subscribe(lambda event: events.append(event))
+
+    result = await agent.session.execute(
+        PromptExecutionRequest(run_id="run-1", attempt_id="attempt-1", message="hi")
+    )
+
+    assert result.outcome == "failed"
+    assert result.error is not None
+    assert result.error.kind == "finalization"
+    assert "pending storage unavailable" in result.error.message
+    assert result.checkpoint_committed is False
+    finished = [event for event in events if event.event.type == "execution_finished"]
+    assert len(finished) == 1
+    assert finished[0].event.result == result
+
+
+@pytest.mark.asyncio
+async def test_respond_rejects_request_run_mismatch_before_resume() -> None:
+    checkpointer = MemoryCheckpointer()
+    pending = HitlRequest(
+        question_id="question-1",
+        thread_id="thread-1",
+        payload=ConfirmRequest(prompt="continue?"),
+        created_at=0,
+    )
+    await checkpointer.save_pending_request("thread-1", pending, run_id="run-real")
+    channel = CheckpointedChannel(
+        checkpointer=checkpointer,
+        thread_id="thread-1",
+        run_id="run-real",
+    )
+    agent = Agent(
+        model=_provider(_answer()).model("faux-model"),
+        checkpointer=checkpointer,
+        thread_id="thread-1",
+        channel=channel,
+    )
+
+    result = await agent.session.execute(
+        RespondExecutionRequest(
+            run_id="run-stale",
+            attempt_id="attempt-1",
+            question_id="question-1",
+            answer=True,
+        )
+    )
+
+    assert result.outcome == "failed"
+    assert result.error is not None
+    assert "does not match" in result.error.message
+    assert await checkpointer.load_pending("thread-1") == (pending, "run-real")
 
 
 @pytest.mark.asyncio

@@ -90,6 +90,11 @@ CubeLoop 会捕获一个只读的 `TurnExecutionContext`。它记录生成本轮
 fallback 模型时，会在同一个 turn 下创建一份新快照。工具调用会保留快照中的绑定，
 而 `before_tool_call` 仍会在实际执行时按当前状态完成权限和策略检查。
 
+具体工具绑定只在当前执行进程的内存中保留。CubeLoop 不会把完整的
+`TurnExecutionContext` 写入 checkpoint；持久化 HITL 在新进程中恢复后，会从新
+Agent 恢复出的工具目录中重新解析工具。如果宿主会独立部署不同版本的工具实现，必须在
+挂起的 run 之间固定工具目录，或对它进行版本管理。
+
 ## `resolve_tool_call`
 
 ```python

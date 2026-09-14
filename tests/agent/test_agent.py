@@ -42,6 +42,7 @@ class TestAgentInit:
         assert agent.state.streaming_message is None
         assert agent.state.pending_tool_calls == set()
         assert agent.state.error_message is None
+        assert agent._checkpoint_loaded is False
 
     def test_custom_initial_state(self):
         provider = FauxProvider(provider_id="faux")
@@ -418,6 +419,7 @@ class TestAgentReset:
 
         await agent.prompt("hello")
         assert len(agent.state.messages) > 0
+        agent._checkpoint_loaded = True
 
         agent.reset()
 
