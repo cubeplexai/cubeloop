@@ -434,6 +434,7 @@ async def test_detach_rejects_outside_hitl_safe_point() -> None:
 @pytest.mark.asyncio
 async def test_in_memory_detach_returns_pending_request() -> None:
     channel = InMemoryChannel(thread_id="thread-1")
+    checkpointer = MemoryCheckpointer()
     provider = _provider(
         AssistantMessage(
             content=[
@@ -450,6 +451,8 @@ async def test_in_memory_detach_returns_pending_request() -> None:
         model=provider.model("faux-model"),
         tools=[ask_user_tool(channel)],
         channel=channel,
+        checkpointer=checkpointer,
+        thread_id="thread-1",
     )
     execution = asyncio.create_task(
         agent.session.execute(
@@ -467,5 +470,66 @@ async def test_in_memory_detach_returns_pending_request() -> None:
     result = await execution
 
     assert result.outcome == "suspended"
+    assert result.checkpoint_committed is False
     assert result.pending_request is not None
     assert result.pending_request.question_id == question_id
+
+
+@pytest.mark.asyncio
+async def test_loaded_pending_request_is_copied_before_result_exposure() -> None:
+    checkpointer = MemoryCheckpointer()
+    pending = HitlRequest(
+        question_id="question-1",
+        thread_id="thread-1",
+        payload=ConfirmRequest(prompt="original"),
+        created_at=0,
+    )
+    await checkpointer.save_pending_request("thread-1", pending, run_id="run-1")
+    agent = Agent(
+        model=_provider(_answer()).model("faux-model"),
+        checkpointer=checkpointer,
+        thread_id="thread-1",
+    )
+    agent._state.last_outcome = "suspended"
+
+    result = await agent.session._settle(
+        PromptExecutionRequest(run_id="run-1", attempt_id="attempt-1", message="hi"),
+        None,
+    )
+    assert result.pending_request is not None
+    result.pending_request.payload.prompt = "mutated"
+
+    loaded = await checkpointer.load_pending("thread-1")
+    assert loaded is not None
+    assert loaded[0].payload.prompt == "original"
+
+
+@pytest.mark.asyncio
+async def test_cancel_requested_during_startup_reaches_new_run_signal() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class SlowClaimCheckpointer(MemoryCheckpointer):
+        async def claim_run(self, thread_id: str, run_id: str) -> None:
+            entered.set()
+            await release.wait()
+            await super().claim_run(thread_id, run_id)
+
+    checkpointer = SlowClaimCheckpointer()
+    agent = Agent(
+        model=_provider(_answer()).model("faux-model"),
+        checkpointer=checkpointer,
+        thread_id="thread-1",
+    )
+    task = asyncio.create_task(
+        agent.session.execute(
+            PromptExecutionRequest(run_id="run-1", attempt_id="attempt-1", message="hi")
+        )
+    )
+    await asyncio.wait_for(entered.wait(), timeout=1)
+
+    agent.session.request_cancel()
+    release.set()
+    result = await task
+
+    assert result.outcome == "cancelled"

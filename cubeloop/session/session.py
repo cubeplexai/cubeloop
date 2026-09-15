@@ -39,6 +39,7 @@ from cubeloop.types import JsonObject
 
 if TYPE_CHECKING:
     from cubeloop.agent.agent import Agent
+    from cubeloop.providers.base import Message
     from cubeloop.session.turn_execution_context import TurnExecutionContext
 
 
@@ -87,6 +88,7 @@ class ExecutionSession:
         self._required_delivery_failure: DeliveryError | None = None
         self._consumers: list[_Consumer] = []
         self._input_status: dict[str, InputStatus] = {}
+        self._queued_inputs: dict[str, Message] = {}
         self._delivery_errors: list[DeliveryError] = []
         self._turn_contexts: list[TurnExecutionContext] = []
         self._pending_request: HitlRequest | None = None
@@ -213,16 +215,20 @@ class ExecutionSession:
                 return InputReceipt(input_id=envelope.input_id, status="closed")
             del self._input_status[terminal_id]
 
-        metadata = dict(envelope.message.metadata)
+        message = envelope.message.model_copy(deep=True)
+        metadata = dict(message.metadata)
         metadata["input_id"] = envelope.input_id
         metadata["input_mode"] = envelope.mode
         metadata["steer_id"] = envelope.input_id
-        message = envelope.message.model_copy(update={"metadata": metadata})
+        message = message.model_copy(
+            update={"metadata": metadata, "run_id": self._active_run_id}
+        )
         if envelope.mode == "steer":
             self._agent.steer(message)
         else:
             self._agent.follow_up(message)
         self._input_status[envelope.input_id] = "queued"
+        self._queued_inputs[envelope.input_id] = message
         return InputReceipt(input_id=envelope.input_id, status="queued")
 
     def cancel_input(self, input_id: str) -> InputReceipt:
@@ -246,6 +252,7 @@ class ExecutionSession:
         if not removed:
             return InputReceipt(input_id=input_id, status="closed")
         self._input_status[input_id] = "cancelled"
+        self._queued_inputs.pop(input_id, None)
         return InputReceipt(input_id=input_id, status="cancelled")
 
     async def execute(self, request: ExecutionRequest) -> ExecutionResult:
@@ -266,6 +273,7 @@ class ExecutionSession:
             self._agent._steering_queue.remove(input_id)
             self._agent._follow_up_queue.remove(input_id)
             del self._input_status[input_id]
+            self._queued_inputs.pop(input_id, None)
         self._turn_contexts.clear()
         self._pending_request = None
         caught: BaseException | None = None
@@ -371,8 +379,10 @@ class ExecutionSession:
             if (
                 isinstance(input_id, str)
                 and self._input_status.get(input_id) == "queued"
+                and self._queued_inputs.get(input_id) is event.message
             ):
                 self._input_status[input_id] = "committed"
+                self._queued_inputs.pop(input_id, None)
                 committed_input_id = input_id
         await self._publish(event, terminal=False)
         if committed_input_id is None:
@@ -532,19 +542,20 @@ class ExecutionSession:
             history_consistent = False
 
         pending = None
+        pending_is_durable = False
         if self._agent.checkpointer is not None and self._agent.thread_id is not None:
             load_pending = getattr(self._agent.checkpointer, "load_pending", None)
             if load_pending is not None:
                 loaded = await load_pending(self._agent.thread_id)
-                pending = loaded[0] if loaded is not None else None
+                if loaded is not None:
+                    pending = loaded[0].model_copy(deep=True)
+                    pending_is_durable = True
         if pending is None:
             pending = self._pending_request
 
         private_outcome = self._agent.state.last_outcome
         error: ExecutionError | None = None
-        if isinstance(caught, asyncio.CancelledError) or (
-            private_outcome == "abandoned" and self._cancel_requested
-        ):
+        if isinstance(caught, asyncio.CancelledError) or self._cancel_requested:
             outcome: ExecutionOutcome = "cancelled"
             error = ExecutionError(
                 kind="cancelled",
@@ -575,10 +586,9 @@ class ExecutionSession:
             )
             error = ExecutionError(kind="execution", message=message)
 
-        checkpoint_committed = self._has_durable_checkpoint() and outcome in {
-            "completed",
-            "suspended",
-        }
+        checkpoint_committed = self._has_durable_checkpoint() and (
+            outcome == "completed" or (outcome == "suspended" and pending_is_durable)
+        )
         return ExecutionResult(
             run_id=request.run_id,
             attempt_id=request.attempt_id,
