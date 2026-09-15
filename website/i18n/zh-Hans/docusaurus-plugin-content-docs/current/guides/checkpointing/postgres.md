@@ -169,10 +169,10 @@ extra = cubepi_threads.extra || EXCLUDED.extra
 ## 条件式清理 pending request
 
 跨 worker 协调 HITL 恢复的宿主可以调用
-`clear_pending_request_if_matches(thread_id, question_id=...)`。只有数据库中
-当前 pending request 的问题 ID 仍然匹配时，它才会同时清除该请求及其所属
-run ID。比较与清理在一条 PostgreSQL 更新中完成，因此旧 worker 的清理不会
-误删另一个 worker 已写入的新 follow-up 请求。
+`clear_pending_request_if_matches(thread_id, question_id=..., run_id=...)`。
+只有数据库中当前 pending request 的问题 ID 和所属 run ID 都仍然匹配时，
+它才会清除这两个字段。比较与清理在一条 PostgreSQL 更新中完成，因此即使
+另一个 worker 的新 run 复用了相同问题 ID，旧 worker 也不会误删新请求。
 
 ## Fork
 

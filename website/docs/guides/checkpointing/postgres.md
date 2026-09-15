@@ -189,10 +189,11 @@ keys.
 ## Conditional pending cleanup
 
 Hosts that coordinate HITL resumes across workers can use
-`clear_pending_request_if_matches(thread_id, question_id=...)`. It clears the
-pending request and owning run ID only if the stored request still has that
-question ID. The comparison and clear are one PostgreSQL update, so a newer
-follow-up request written by another worker is never erased by stale cleanup.
+`clear_pending_request_if_matches(thread_id, question_id=..., run_id=...)`. It
+clears the pending request and owning run ID only if both stored identifiers
+still match. The comparison and clear are one PostgreSQL update, so a newer
+request written by another worker is never erased by stale cleanup, even if it
+reuses the same question ID in a different run.
 
 ## Forks
 

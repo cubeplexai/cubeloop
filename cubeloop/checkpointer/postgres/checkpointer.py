@@ -599,8 +599,9 @@ class PostgresCheckpointer:
         thread_id: str,
         *,
         question_id: str,
+        run_id: str,
     ) -> bool:
-        """Clear pending state only while it still names ``question_id``.
+        """Clear pending state only while it still names the question and run.
 
         The predicate and mutation run in one PostgreSQL ``UPDATE``. If a
         concurrent writer has already checkpointed a replacement request,
@@ -613,9 +614,11 @@ class PostgresCheckpointer:
                 "UPDATE cubepi_threads "
                 "SET pending_request = NULL, run_id = NULL, updated_at = now() "
                 "WHERE thread_id = $1 "
-                "AND pending_request->>'question_id' = $2",
+                "AND pending_request->>'question_id' = $2 "
+                "AND run_id = $3",
                 thread_id,
                 question_id,
+                run_id,
             )
         return result == "UPDATE 1"
 
