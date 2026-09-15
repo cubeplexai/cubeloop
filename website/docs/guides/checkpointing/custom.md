@@ -5,7 +5,7 @@ description: "Implement a custom checkpointer backend for CubeLoop using the Che
 
 # Custom Checkpointing Backends
 
-The `Checkpointer` protocol is three async methods:
+The core history portion of the `Checkpointer` protocol is three async methods:
 
 ```python
 class Checkpointer(Protocol):
@@ -14,8 +14,15 @@ class Checkpointer(Protocol):
     async def save_extra(self, thread_id: str, extra: dict[str, Any]) -> None: ...
 ```
 
-That's the whole contract. Implement it for Redis, DynamoDB, S3, a
-filesystem, an in-memory dict — anything that can append-and-list.
+That is enough for basic message and extra persistence. The full protocol also
+contains run, fork, and HITL lifecycle methods; implement those when the host
+uses the corresponding features. In particular,
+`clear_pending_request_if_matches(thread_id, question_id=..., run_id=...)`
+must compare and clear atomically so stale resume cleanup cannot erase a newer
+pending request. See the API reference for the complete signatures.
+
+You can implement the protocol for Redis, DynamoDB, S3, a filesystem, an
+in-memory dict — anything that can append-and-list.
 
 ## When the agent calls each method
 

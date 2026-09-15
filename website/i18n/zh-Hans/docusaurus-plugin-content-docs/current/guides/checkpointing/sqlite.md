@@ -127,6 +127,13 @@ Checkpointer 内部对每次读写都用 `asyncio.Lock`。SQLite 本身允许
 如果你需要跨进程共享 thread 写入,请用 [Postgres](./postgres),
 它对每个 thread 都用 advisory lock。
 
+## 条件式清理 pending request
+
+`clear_pending_request_if_matches(thread_id, question_id=..., run_id=...)`
+只有在当前 pending request 的问题 ID 和所属 run ID 都仍然匹配时，才会
+删除 pending 状态。SQLite 在一条语句中完成比较和删除；checkpointer 的
+写锁会将它与同一进程内的其他写入串行化。
+
 ## 文件放哪里
 
 生产环境用绝对路径：

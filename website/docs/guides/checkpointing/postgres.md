@@ -193,7 +193,8 @@ Hosts that coordinate HITL resumes across workers can use
 clears the pending request and owning run ID only if both stored identifiers
 still match. The comparison and clear are one PostgreSQL update, so a newer
 request written by another worker is never erased by stale cleanup, even if it
-reuses the same question ID in a different run.
+reuses the same question ID in a different run. The same API is available on
+all built-in checkpointers.
 
 ## Forks
 

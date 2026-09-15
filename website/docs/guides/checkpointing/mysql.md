@@ -193,6 +193,14 @@ under a row lock and writes the merged dict, rather than using
 `JSON_MERGE_PATCH`, whose null-deletion and deep-merge semantics differ
 from `dict.update`.)
 
+## Conditional pending cleanup
+
+Hosts that coordinate HITL resumes across workers can use
+`clear_pending_request_if_matches(thread_id, question_id=..., run_id=...)`. It
+clears the pending request and owning run ID only if both stored identifiers
+still match. The comparison and clear are one MySQL update, so stale cleanup
+cannot erase a newer request, even if another run reuses the question ID.
+
 ## Forks
 
 `MySQLCheckpointer` implements the v4 `snapshot` / `fork` /

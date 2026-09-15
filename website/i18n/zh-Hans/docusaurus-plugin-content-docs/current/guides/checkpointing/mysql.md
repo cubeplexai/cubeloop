@@ -149,6 +149,14 @@ cubepi_schema_version
 
 `save_extra` 执行浅层顶级合并，而非替换——与 Postgres 和 SQLite 的行为相同。先写入 `{"foo": 1}` 再写入 `{"bar": 2}` 后，结果为 `{"foo": 1, "bar": 2}`。（内部实现是在行锁保护下读取当前 `extra`，然后写入合并后的字典，而非使用 `JSON_MERGE_PATCH`——后者的 null 删除和深度合并语义与 `dict.update` 不同。）
 
+## 条件式清理 pending request
+
+跨 worker 协调 HITL 恢复的宿主可以调用
+`clear_pending_request_if_matches(thread_id, question_id=..., run_id=...)`。
+只有当前 pending request 的问题 ID 和所属 run ID 都仍然匹配时，它才会
+清除这两个字段。比较与清理在一条 MySQL 更新中完成，因此即使另一个 run
+复用了相同问题 ID，旧 worker 也不会误删新请求。
+
 ## Forks
 
 `MySQLCheckpointer` 实现了 v4 的 `snapshot` / `fork` /
