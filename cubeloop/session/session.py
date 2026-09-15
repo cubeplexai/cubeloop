@@ -134,15 +134,15 @@ class ExecutionSession:
             data = await self._agent.checkpointer.load(self._agent.thread_id)
             if data is None:
                 return None
-            messages = list(data.messages)
-            extra = dict(data.extra)
-            self._agent._state._messages = messages
+            installed = copy.deepcopy(data)
+            exposed = copy.deepcopy(data)
+            self._agent._state._messages = list(installed.messages)
             self._agent._extra.clear()
-            self._agent._extra.update(extra)
+            self._agent._extra.update(installed.extra)
             self._agent._checkpoint_loaded = True
             self._drop_memory_input_receipts()
             self._checkpoint_write_failed = False
-            return data
+            return exposed
 
     def request_cancel(self) -> None:
         if not self._accepting_cancel:

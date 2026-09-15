@@ -519,10 +519,11 @@ async def test_checkpoint_message_write_failure_marks_history_inconsistent() -> 
         ),
         _answer("next attempt"),
     )
+    checkpointer = FailingToolResultCheckpointer()
     agent = Agent(
         model=provider.model("faux-model"),
         tools=[tool],
-        checkpointer=FailingToolResultCheckpointer(),
+        checkpointer=checkpointer,
         thread_id="thread-1",
     )
 
@@ -539,6 +540,7 @@ async def test_checkpoint_message_write_failure_marks_history_inconsistent() -> 
     assert retry.outcome == "failed"
     assert retry.history_consistent is False
     assert retry.checkpoint_committed is False
+    assert checkpointer._runs["thread-1"]["run-2"].completed_at is None
 
 
 @pytest.mark.asyncio
@@ -721,6 +723,37 @@ async def test_load_checkpoint_restores_extra_in_place_even_without_messages() -
     persisted = await checkpointer.load("thread-1")
     assert persisted is not None
     assert persisted.extra == {"todo": ["ship"], "memory": "pinned"}
+
+
+@pytest.mark.asyncio
+async def test_load_checkpoint_isolates_storage_agent_and_return_value() -> None:
+    checkpointer = MemoryCheckpointer()
+    stored = UserMessage(
+        content=[TextContent(text="stored")],
+        metadata={"nested": {"value": 1}},
+        run_id="run-1",
+    )
+    await checkpointer.append("thread-1", [stored])
+    await checkpointer.save_extra("thread-1", {"nested": {"value": 1}})
+    agent = Agent(
+        model=_provider(_answer()).model("faux-model"),
+        checkpointer=checkpointer,
+        thread_id="thread-1",
+    )
+
+    loaded = await agent.session.load_checkpoint()
+    assert loaded is not None
+    loaded.messages[0].content[0].text = "returned"
+    loaded.extra["nested"]["value"] = 2
+
+    assert agent.state.messages[0].content[0].text == "stored"
+    assert agent.session.state_context["nested"]["value"] == 1
+    agent.state.messages[0].content[0].text = "agent"
+    agent.session.state_context["nested"]["value"] = 3
+    durable = await checkpointer.load("thread-1")
+    assert durable is not None
+    assert durable.messages[0].content[0].text == "stored"
+    assert durable.extra["nested"]["value"] == 1
 
 
 @pytest.mark.asyncio

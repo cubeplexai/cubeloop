@@ -13,6 +13,7 @@ from typing import (
     Literal,
     Protocol,
     TypeVar,
+    cast,
     runtime_checkable,
 )
 
@@ -917,7 +918,7 @@ class BoundModel:
         if options is not None and options.on_model_attempt is not None:
             result = options.on_model_attempt(self.spec)
             if inspect.isawaitable(result):
-                await result
+                _ = await cast(Awaitable[Any], result)
         return await self.provider.generate(
             self.spec,
             messages,

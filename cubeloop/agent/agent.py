@@ -379,6 +379,8 @@ class Agent(Generic[TMessage]):
         return _sink
 
     async def _dispatch_outcome(self, outcome: RunOutcome | None, run_id: str) -> None:
+        if self.session._checkpoint_write_failed:
+            return
         if outcome == "complete":
             run_messages = [m for m in self._state.messages if m.run_id == run_id]
             try:
