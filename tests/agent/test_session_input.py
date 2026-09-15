@@ -310,7 +310,7 @@ async def test_committed_input_id_remains_deduplicated_across_attempts() -> None
     )
     assert agent.session.submit_input(envelope).status == "queued"
     release_first.set()
-    await first
+    assert await first == "run-1"
 
     second = asyncio.create_task(agent.prompt("second", run_id="run-2"))
     await asyncio.wait_for(second_entered.wait(), timeout=1)
@@ -319,7 +319,7 @@ async def test_committed_input_id_remains_deduplicated_across_attempts() -> None
     assert duplicate.status == "committed"
     assert duplicate.durability == "memory"
     release_second.set()
-    await second
+    assert await second == "run-2"
     assert (
         sum(
             message.metadata.get("input_id") == "stable-id"
