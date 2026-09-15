@@ -166,6 +166,14 @@ extra = cubepi_threads.extra || EXCLUDED.extra
 所以先写 `{"foo": 1}` 再写 `{"bar": 2}` 会得到 `{"foo": 1, "bar": 2}`。
 中间件可以安全地写入部分 dict 而不会丢失先前的键。
 
+## 条件式清理 pending request
+
+跨 worker 协调 HITL 恢复的宿主可以调用
+`clear_pending_request_if_matches(thread_id, question_id=...)`。只有数据库中
+当前 pending request 的问题 ID 仍然匹配时，它才会同时清除该请求及其所属
+run ID。比较与清理在一条 PostgreSQL 更新中完成，因此旧 worker 的清理不会
+误删另一个 worker 已写入的新 follow-up 请求。
+
 ## Fork
 
 `parent_thread_id` + `forked_at_seq` 列用于支持
