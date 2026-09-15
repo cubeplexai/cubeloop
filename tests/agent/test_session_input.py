@@ -230,7 +230,7 @@ async def test_session_input_id_overrides_caller_steering_key() -> None:
     assert agent.session.cancel_input("owned-id").status == "cancelled"
 
     release.set()
-    await task
+    _ = await task
     assert not any(
         message.metadata.get("input_id") == "owned-id"
         for message in agent.state.messages

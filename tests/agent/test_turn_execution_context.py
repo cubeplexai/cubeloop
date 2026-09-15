@@ -21,6 +21,7 @@ from cubeloop.providers.base import (
 from cubeloop.providers.faux import FauxProvider
 from cubeloop.providers.fallback import FallbackBoundModel
 from cubeloop.session import TurnExecutionContext
+from cubeloop.session.turn_execution_context import FrozenObject, _freeze
 
 
 class _Args(BaseModel):
@@ -234,6 +235,22 @@ def test_message_view_preserves_tool_result_request_fields() -> None:
     assert message.tool_name == "work"
     assert message.is_error is True
     assert message.details["code"] == "denied"
+
+
+def test_freeze_recurses_through_tuples_and_sets() -> None:
+    class Nested(BaseModel):
+        items: tuple[dict[str, list[int]], ...]
+        labels: set[str]
+
+    frozen = _freeze(Nested(items=({"values": [1]},), labels={"a"}))
+
+    assert isinstance(frozen, FrozenObject)
+    assert frozen.items[0]["values"] == (1,)
+    assert frozen.labels == frozenset({"a"})
+    with pytest.raises(TypeError):
+        frozen.items[0]["values"] = (2,)
+    with pytest.raises(AttributeError):
+        frozen.labels.add("b")
 
 
 @pytest.mark.asyncio
