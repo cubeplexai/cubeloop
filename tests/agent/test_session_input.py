@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from cubeloop import Agent
+from cubeloop.agent.types import MessageEndEvent
 from cubeloop.checkpointer.memory import MemoryCheckpointer
 from cubeloop.providers.base import AssistantMessage, TextContent, UserMessage
 from cubeloop.providers.faux import FauxProvider
@@ -479,3 +480,92 @@ async def test_cancelled_attempt_discards_its_undrained_input_queue() -> None:
     assert agent.session.cancel_input("retry-id").status == "cancelled"
     release_second.set()
     assert await second == "run-2"
+
+
+@pytest.mark.asyncio
+async def test_accepted_input_isolated_from_later_caller_mutation() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def first_response(messages, model):
+        del messages, model
+        entered.set()
+        await release.wait()
+        return AssistantMessage(
+            content=[TextContent(text="first")], stop_reason="end_turn"
+        )
+
+    provider = FauxProvider(provider_id="faux")
+    provider.set_responses(
+        [
+            first_response,
+            AssistantMessage(
+                content=[TextContent(text="done")], stop_reason="end_turn"
+            ),
+        ]
+    )
+    agent = Agent(model=provider.model("faux-model"))
+    task = asyncio.create_task(agent.prompt("hi", run_id="run-1"))
+    await asyncio.wait_for(entered.wait(), timeout=1)
+    message = UserMessage(
+        content=[TextContent(text="original")], metadata={"nested": {"value": 1}}
+    )
+    assert (
+        agent.session.submit_input(
+            InputEnvelope(input_id="input-1", message=message, mode="follow_up")
+        ).status
+        == "queued"
+    )
+
+    message.content[0].text = "mutated"
+    message.metadata["nested"]["value"] = 2
+    release.set()
+    assert await task == "run-1"
+
+    accepted = next(
+        item
+        for item in agent.state.messages
+        if item.metadata.get("input_id") == "input-1"
+    )
+    assert accepted.content[0].text == "original"
+    assert accepted.metadata["nested"]["value"] == 1
+
+
+@pytest.mark.asyncio
+async def test_matching_caller_metadata_cannot_commit_an_unrelated_message() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def response(messages, model):
+        del messages, model
+        entered.set()
+        await release.wait()
+        return AssistantMessage(
+            content=[TextContent(text="done")], stop_reason="end_turn"
+        )
+
+    provider = FauxProvider(provider_id="faux")
+    provider.set_responses([response])
+    agent = Agent(model=provider.model("faux-model"))
+    task = asyncio.create_task(agent.prompt("hi", run_id="run-1"))
+    await asyncio.wait_for(entered.wait(), timeout=1)
+    envelope = InputEnvelope(
+        input_id="input-1",
+        message=UserMessage(content=[TextContent(text="actual")]),
+        mode="follow_up",
+    )
+    assert agent.session.submit_input(envelope).status == "queued"
+
+    await agent.session._publish_agent_event(
+        MessageEndEvent(
+            message=UserMessage(
+                content=[TextContent(text="forged")],
+                metadata={"input_id": "input-1"},
+                run_id="run-1",
+            )
+        )
+    )
+
+    assert agent.session.cancel_input("input-1").status == "cancelled"
+    release.set()
+    assert await task == "run-1"

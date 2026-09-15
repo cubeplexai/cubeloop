@@ -1232,6 +1232,8 @@ class Agent(Generic[TMessage]):
         self._state.is_streaming = True
         self._state.streaming_message = None
         self._state.error_message = None
+        if self.session._cancel_requested:
+            signal.set()
 
         try:
             await executor(signal)
