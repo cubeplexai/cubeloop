@@ -6,6 +6,7 @@ import pytest
 
 from cubeloop import Agent
 from cubeloop.agent.types import AgentStartEvent
+from cubeloop.checkpointer.memory import MemoryCheckpointer
 from cubeloop.providers.base import UserMessage
 from cubeloop.providers.base import AssistantMessage, TextContent
 from cubeloop.providers.faux import FauxProvider
@@ -126,6 +127,67 @@ async def test_consumers_receive_isolated_agent_event_snapshots() -> None:
 
     assert observed == ["original"]
     assert agent.state.messages[0].content[0].text == "original"
+
+
+@pytest.mark.asyncio
+async def test_terminal_event_sanitizes_error_cause_for_consumers() -> None:
+    class BrokenPendingCheckpointer(MemoryCheckpointer):
+        async def load_pending(self, thread_id: str):
+            del thread_id
+            raise RuntimeError("storage failed")
+
+    provider = FauxProvider(provider_id="faux")
+    provider.set_responses(
+        [AssistantMessage(content=[TextContent(text="done")], stop_reason="end_turn")]
+    )
+    agent = Agent(
+        model=provider.model("faux-model"),
+        checkpointer=BrokenPendingCheckpointer(),
+        thread_id="thread-1",
+    )
+    observed_causes = []
+
+    def listener(envelope):
+        if envelope.event.type == "execution_finished":
+            assert envelope.event.result.error is not None
+            observed_causes.append(envelope.event.result.error.cause)
+
+    agent.session.subscribe(listener, name="first")
+    agent.session.subscribe(listener, name="second")
+
+    result = await agent.session.execute(
+        PromptExecutionRequest(run_id="run-1", attempt_id="attempt-1", message="hi")
+    )
+
+    assert result.error is not None
+    assert isinstance(result.error.cause, RuntimeError)
+    assert observed_causes == [None, None]
+
+
+@pytest.mark.asyncio
+async def test_cancel_from_agent_end_consumer_does_not_override_completion() -> None:
+    provider = FauxProvider(provider_id="faux")
+    provider.set_responses(
+        [AssistantMessage(content=[TextContent(text="done")], stop_reason="end_turn")]
+    )
+    agent = Agent(
+        model=provider.model("faux-model"),
+        checkpointer=MemoryCheckpointer(),
+        thread_id="thread-1",
+    )
+
+    def cancel_too_late(envelope):
+        if envelope.event.type == "agent_end":
+            agent.session.request_cancel()
+
+    agent.session.subscribe(cancel_too_late)
+
+    result = await agent.session.execute(
+        PromptExecutionRequest(run_id="run-1", attempt_id="attempt-1", message="hi")
+    )
+
+    assert result.outcome == "completed"
+    assert result.checkpoint_committed is True
 
 
 @pytest.mark.asyncio

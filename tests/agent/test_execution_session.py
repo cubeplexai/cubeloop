@@ -435,6 +435,13 @@ async def test_detach_rejects_outside_hitl_safe_point() -> None:
 async def test_in_memory_detach_returns_pending_request() -> None:
     channel = InMemoryChannel(thread_id="thread-1")
     checkpointer = MemoryCheckpointer()
+    stale = HitlRequest(
+        question_id="stale-question",
+        thread_id="thread-1",
+        payload=ConfirmRequest(prompt="stale"),
+        created_at=0,
+    )
+    await checkpointer.save_pending_request("thread-1", stale, run_id="old-run")
     provider = _provider(
         AssistantMessage(
             content=[
@@ -502,6 +509,31 @@ async def test_loaded_pending_request_is_copied_before_result_exposure() -> None
     loaded = await checkpointer.load_pending("thread-1")
     assert loaded is not None
     assert loaded[0].payload.prompt == "original"
+
+
+@pytest.mark.asyncio
+async def test_completed_attempt_does_not_expose_pending_from_another_run() -> None:
+    checkpointer = MemoryCheckpointer()
+    stale = HitlRequest(
+        question_id="stale-question",
+        thread_id="thread-1",
+        payload=ConfirmRequest(prompt="stale"),
+        created_at=0,
+    )
+    await checkpointer.save_pending_request("thread-1", stale, run_id="old-run")
+    agent = Agent(
+        model=_provider(_answer()).model("faux-model"),
+        checkpointer=checkpointer,
+        thread_id="thread-1",
+    )
+
+    result = await agent.session.execute(
+        PromptExecutionRequest(run_id="run-1", attempt_id="attempt-1", message="hi")
+    )
+
+    assert result.outcome == "completed"
+    assert result.pending_request is None
+    assert result.checkpoint_committed is True
 
 
 @pytest.mark.asyncio
