@@ -154,6 +154,13 @@ have multiple processes writing the same `agent.db`:
 If you need multi-process writers on shared threads, jump to
 [Postgres](./postgres) which uses an advisory lock per thread.
 
+## Conditional pending cleanup
+
+`clear_pending_request_if_matches(thread_id, question_id=..., run_id=...)`
+deletes pending state only when both stored identifiers still match. SQLite
+performs the comparison and delete in one statement, while the checkpointer's
+writer lock serializes it with other writes in the same process.
+
 ## Forks
 
 `SQLiteCheckpointer` implements the v4 `snapshot` / `fork` /

@@ -740,6 +740,28 @@ class MySQLCheckpointer:
             return HitlRequest.model_validate_json(raw)
         return HitlRequest.model_validate(raw)
 
+    async def clear_pending_request_if_matches(
+        self,
+        thread_id: str,
+        *,
+        question_id: str,
+        run_id: str,
+    ) -> bool:
+        """Atomically clear pending state when its question and run still match."""
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "UPDATE cubepi_threads "
+                    "SET pending_request = NULL, run_id = NULL, "
+                    "updated_at = CURRENT_TIMESTAMP "
+                    "WHERE thread_id = %s "
+                    "AND JSON_UNQUOTE(JSON_EXTRACT(pending_request, '$.question_id')) = %s "
+                    "AND run_id = %s",
+                    (thread_id, question_id, run_id),
+                )
+                return cur.rowcount == 1
+
     async def load_pending_run_id(self, thread_id: str) -> str | None:
         """Return the run_id of the currently pending HITL request.
 

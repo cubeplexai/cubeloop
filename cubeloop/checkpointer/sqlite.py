@@ -326,6 +326,23 @@ class SQLiteCheckpointer:
             row = await cursor.fetchone()
             return HitlRequest.model_validate_json(row[0]) if row else None
 
+    async def clear_pending_request_if_matches(
+        self,
+        thread_id: str,
+        *,
+        question_id: str,
+        run_id: str,
+    ) -> bool:
+        assert self._db is not None
+        async with self._lock, _writer_txn(self._db):
+            cursor = await self._db.execute(
+                "DELETE FROM thread_pending_request "
+                "WHERE thread_id = ? AND json_extract(request_json, '$.question_id') = ? "
+                "AND run_id = ?",
+                (thread_id, question_id, run_id),
+            )
+            return cursor.rowcount == 1
+
     async def load_pending_run_id(self, thread_id: str) -> str | None:
         assert self._db is not None
         async with self._lock:

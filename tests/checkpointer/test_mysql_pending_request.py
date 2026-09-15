@@ -37,6 +37,26 @@ async def test_mysql_clear_pending_request(clean_mysql_db) -> None:
 
 
 @pytest.mark.asyncio
+async def test_mysql_compare_and_clear_pending_request(clean_mysql_db) -> None:
+    await _setup_schema_v2(clean_mysql_db)
+    async with MySQLCheckpointer(clean_mysql_db) as cp:
+        await cp.save_pending_request("t-1", _req(qid="q-current"), run_id="run-new")
+
+        assert not await cp.clear_pending_request_if_matches(
+            "t-1", question_id="q-replaced", run_id="run-new"
+        )
+        assert not await cp.clear_pending_request_if_matches(
+            "t-1", question_id="q-current", run_id="run-old"
+        )
+        assert await cp.load_pending("t-1") == (_req(qid="q-current"), "run-new")
+
+        assert await cp.clear_pending_request_if_matches(
+            "t-1", question_id="q-current", run_id="run-new"
+        )
+        assert await cp.load_pending("t-1") is None
+
+
+@pytest.mark.asyncio
 async def test_mysql_pending_request_creates_thread_row_lazily(clean_mysql_db) -> None:
     """save_pending_request must upsert the thread row so calling it on an unknown
     thread doesn't violate the FK constraint."""

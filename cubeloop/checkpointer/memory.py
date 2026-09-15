@@ -85,6 +85,25 @@ class MemoryCheckpointer:
     async def load_pending_request(self, thread_id: str) -> HitlRequest | None:
         return self._pending.get(thread_id)
 
+    async def clear_pending_request_if_matches(
+        self,
+        thread_id: str,
+        *,
+        question_id: str,
+        run_id: str,
+    ) -> bool:
+        async with self._lock:
+            request = self._pending.get(thread_id)
+            if (
+                request is None
+                or request.question_id != question_id
+                or self._pending_run_id.get(thread_id) != run_id
+            ):
+                return False
+            self._pending.pop(thread_id, None)
+            self._pending_run_id.pop(thread_id, None)
+            return True
+
     async def load_pending_run_id(self, thread_id: str) -> str | None:
         return self._pending_run_id.get(thread_id)
 

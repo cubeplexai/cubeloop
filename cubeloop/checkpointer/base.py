@@ -44,6 +44,20 @@ class Checkpointer(Protocol):
         """
         ...
 
+    async def clear_pending_request_if_matches(
+        self,
+        thread_id: str,
+        *,
+        question_id: str,
+        run_id: str,
+    ) -> bool:
+        """Atomically clear pending state when its question and run still match.
+
+        Returns True when the matching pending request was cleared and False
+        when the thread has no pending request or either identifier changed.
+        """
+        ...
+
     async def snapshot(self, thread_id: str, *, after_run_id: str) -> list[Message]:
         """Return messages of completed runs of `thread_id` up through
         and including `after_run_id`, in source seq order. Raises

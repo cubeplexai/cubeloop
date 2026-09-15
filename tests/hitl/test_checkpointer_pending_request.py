@@ -39,6 +39,24 @@ async def test_memory_clear_pending():
     assert await cp.load_pending_request("t-1") is None
 
 
+async def test_memory_compare_and_clear_pending():
+    cp = MemoryCheckpointer()
+    await cp.save_pending_request("t-1", _req(qid="q-current"), run_id="run-new")
+
+    assert not await cp.clear_pending_request_if_matches(
+        "t-1", question_id="q-replaced", run_id="run-new"
+    )
+    assert not await cp.clear_pending_request_if_matches(
+        "t-1", question_id="q-current", run_id="run-old"
+    )
+    assert await cp.load_pending("t-1") == (_req(qid="q-current"), "run-new")
+
+    assert await cp.clear_pending_request_if_matches(
+        "t-1", question_id="q-current", run_id="run-new"
+    )
+    assert await cp.load_pending("t-1") is None
+
+
 async def test_sqlite_save_and_load_pending(sqlite_cp):
     assert await sqlite_cp.load_pending_request("t-1") is None
     req = _req()
@@ -51,6 +69,26 @@ async def test_sqlite_clear_pending(sqlite_cp):
     await sqlite_cp.save_pending_request("t-1", _req())
     await sqlite_cp.save_pending_request("t-1", None)
     assert await sqlite_cp.load_pending_request("t-1") is None
+
+
+async def test_sqlite_compare_and_clear_pending(sqlite_cp):
+    await sqlite_cp.save_pending_request("t-1", _req(qid="q-current"), run_id="run-new")
+
+    assert not await sqlite_cp.clear_pending_request_if_matches(
+        "t-1", question_id="q-replaced", run_id="run-new"
+    )
+    assert not await sqlite_cp.clear_pending_request_if_matches(
+        "t-1", question_id="q-current", run_id="run-old"
+    )
+    assert await sqlite_cp.load_pending("t-1") == (
+        _req(qid="q-current"),
+        "run-new",
+    )
+
+    assert await sqlite_cp.clear_pending_request_if_matches(
+        "t-1", question_id="q-current", run_id="run-new"
+    )
+    assert await sqlite_cp.load_pending("t-1") is None
 
 
 async def test_sqlite_create_table_idempotent(sqlite_cp):

@@ -173,6 +173,7 @@ extra = cubepi_threads.extra || EXCLUDED.extra
 只有数据库中当前 pending request 的问题 ID 和所属 run ID 都仍然匹配时，
 它才会清除这两个字段。比较与清理在一条 PostgreSQL 更新中完成，因此即使
 另一个 worker 的新 run 复用了相同问题 ID，旧 worker 也不会误删新请求。
+所有内置 checkpointer 都提供相同的 API。
 
 ## Fork
 

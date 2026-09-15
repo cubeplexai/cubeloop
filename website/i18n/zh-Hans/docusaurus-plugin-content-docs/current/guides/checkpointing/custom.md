@@ -5,7 +5,7 @@ description: "使用 Checkpointer protocol 为 CubeLoop 实现自定义 checkpoi
 
 # 自定义 Checkpointing 后端
 
-`Checkpointer` protocol 只有三个 async 方法：
+`Checkpointer` protocol 的核心历史记录部分包含三个 async 方法：
 
 ```python
 class Checkpointer(Protocol):
@@ -14,7 +14,13 @@ class Checkpointer(Protocol):
     async def save_extra(self, thread_id: str, extra: dict[str, Any]) -> None: ...
 ```
 
-这就是全部契约。你可以为 Redis、DynamoDB、S3、文件系统、内存字典实现它——任何支持追加和列表操作的存储均可。
+这足以支持基本的消息和 extra 持久化。完整 protocol 还包括 run、fork 和
+HITL 生命周期方法；宿主使用相应功能时也需要实现这些方法。其中
+`clear_pending_request_if_matches(thread_id, question_id=..., run_id=...)`
+必须以原子方式完成比较和清理，避免过期的恢复流程误删新的 pending request。
+完整签名请查看 API 参考。
+
+你可以为 Redis、DynamoDB、S3、文件系统、内存字典实现该 protocol——任何支持追加和列表操作的存储均可。
 
 ## agent 何时调用各方法
 
