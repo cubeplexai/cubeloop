@@ -757,7 +757,7 @@ class MySQLCheckpointer:
                     "updated_at = CURRENT_TIMESTAMP "
                     "WHERE thread_id = %s "
                     "AND JSON_UNQUOTE(JSON_EXTRACT(pending_request, '$.question_id')) = %s "
-                    "AND run_id = %s",
+                    "AND BINARY run_id = BINARY %s",
                     (thread_id, question_id, run_id),
                 )
                 return cur.rowcount == 1
