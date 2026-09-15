@@ -25,6 +25,10 @@ class _Args(BaseModel):
     value: str
 
 
+class _ReplacementArgs(BaseModel):
+    replacement: str
+
+
 @pytest.mark.asyncio
 async def test_context_captures_transformed_request_as_immutable_view() -> None:
     provider = FauxProvider(provider_id="faux")
@@ -102,6 +106,8 @@ async def test_tool_call_uses_binding_captured_for_the_model_request() -> None:
 
     async def replace_after_response(message, context, signal=None):
         del message, signal
+        old_tool.parameters = _ReplacementArgs
+        old_tool.execute = new_execute
         context.tools = [new_tool]
 
     agent = Agent(

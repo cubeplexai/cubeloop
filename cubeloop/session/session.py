@@ -186,8 +186,23 @@ class ExecutionSession:
             )
         if not self._accepting_input:
             return InputReceipt(input_id=envelope.input_id, status="closed")
-        if len(self._input_status) >= _INPUT_DEDUP_CAPACITY:
+        if (
+            envelope.message.run_id is not None
+            and envelope.message.run_id != self._active_run_id
+        ):
             return InputReceipt(input_id=envelope.input_id, status="closed")
+        if len(self._input_status) >= _INPUT_DEDUP_CAPACITY:
+            terminal_id = next(
+                (
+                    input_id
+                    for input_id, status in self._input_status.items()
+                    if status != "queued"
+                ),
+                None,
+            )
+            if terminal_id is None:
+                return InputReceipt(input_id=envelope.input_id, status="closed")
+            del self._input_status[terminal_id]
 
         metadata = dict(envelope.message.metadata)
         metadata["input_id"] = envelope.input_id
@@ -226,8 +241,7 @@ class ExecutionSession:
 
     async def execute(self, request: ExecutionRequest) -> ExecutionResult:
         """Execute one attempt and return settled lifecycle facts."""
-        if self._active_attempt_id is not None or self._agent._run_lock.locked():
-            raise ExecutionBusy("execution session is already processing an attempt")
+        self._assert_idle()
 
         self._active_attempt_id = request.attempt_id
         self._active_run_id = request.run_id
@@ -236,7 +250,11 @@ class ExecutionSession:
         self._seq = 0
         self._delivery_errors = []
         self._required_delivery_failure = None
-        self._input_status.clear()
+        self._input_status = {
+            input_id: status
+            for input_id, status in self._input_status.items()
+            if status != "queued"
+        }
         self._turn_contexts.clear()
         caught: BaseException | None = None
         try:
@@ -264,6 +282,8 @@ class ExecutionSession:
         try:
             try:
                 result = await self._settle(request, caught)
+            except asyncio.CancelledError as exc:
+                result = self._cancelled_result(request, exc)
             except Exception as exc:
                 result = ExecutionResult(
                     run_id=request.run_id,
@@ -278,9 +298,17 @@ class ExecutionSession:
                     history_consistent=False,
                     delivery_errors=tuple(self._delivery_errors),
                 )
-            final_errors = await self._publish(
-                ExecutionFinished(result=result), terminal=True
+            publish_task = asyncio.create_task(
+                self._publish(ExecutionFinished(result=result), terminal=True)
             )
+            while True:
+                try:
+                    final_errors = await asyncio.shield(publish_task)
+                    break
+                except asyncio.CancelledError:
+                    if publish_task.done():
+                        final_errors = publish_task.result()
+                        break
             if final_errors:
                 result = replace(
                     result,
@@ -290,6 +318,32 @@ class ExecutionSession:
         finally:
             self._active_attempt_id = None
             self._active_run_id = None
+
+    def _assert_idle(self) -> None:
+        if self._active_attempt_id is not None or self._agent._run_lock.locked():
+            raise ExecutionBusy("execution session is already processing an attempt")
+
+    def _set_input_admission(self, accepting: bool) -> None:
+        self._accepting_input = accepting
+
+    def _cancelled_result(
+        self,
+        request: ExecutionRequest,
+        cause: asyncio.CancelledError,
+    ) -> ExecutionResult:
+        return ExecutionResult(
+            run_id=request.run_id,
+            attempt_id=request.attempt_id,
+            outcome="cancelled",
+            error=ExecutionError(
+                kind="cancelled",
+                message="execution cancelled",
+                cause=cause,
+            ),
+            checkpoint_committed=False,
+            history_consistent=False,
+            delivery_errors=tuple(self._delivery_errors),
+        )
 
     async def _publish_agent_event(self, event: SessionEvent) -> None:
         if self._active_attempt_id is None:

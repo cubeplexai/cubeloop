@@ -93,6 +93,71 @@ async def test_settlement_failure_returns_result_and_terminal_event() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancellation_during_settlement_still_publishes_terminal_event() -> None:
+    entered = asyncio.Event()
+
+    class SlowPendingCheckpointer(MemoryCheckpointer):
+        async def load_pending(self, thread_id: str):
+            del thread_id
+            entered.set()
+            await asyncio.Future()
+
+    agent = Agent(
+        model=_provider(_answer()).model("faux-model"),
+        checkpointer=SlowPendingCheckpointer(),
+        thread_id="thread-1",
+    )
+    events = []
+    agent.session.subscribe(lambda event: events.append(event))
+    task = asyncio.create_task(
+        agent.session.execute(
+            PromptExecutionRequest(run_id="run-1", attempt_id="attempt-1", message="hi")
+        )
+    )
+    await asyncio.wait_for(entered.wait(), timeout=1)
+
+    task.cancel()
+    result = await task
+
+    assert result.outcome == "cancelled"
+    finished = [event for event in events if event.event.type == "execution_finished"]
+    assert len(finished) == 1
+    assert finished[0].event.result == result
+
+
+@pytest.mark.asyncio
+async def test_cancellation_during_terminal_delivery_does_not_drop_terminal() -> None:
+    terminal_entered = asyncio.Event()
+    release_terminal = asyncio.Event()
+    events = []
+
+    async def listener(envelope):
+        if envelope.event.type == "execution_finished":
+            terminal_entered.set()
+            await release_terminal.wait()
+        events.append(envelope)
+
+    agent = Agent(model=_provider(_answer()).model("faux-model"))
+    agent.session.subscribe(listener)
+    task = asyncio.create_task(
+        agent.session.execute(
+            PromptExecutionRequest(run_id="run-1", attempt_id="attempt-1", message="hi")
+        )
+    )
+    await asyncio.wait_for(terminal_entered.wait(), timeout=1)
+
+    task.cancel()
+    release_terminal.set()
+    result = await task
+
+    assert result.outcome == "completed"
+    assert (
+        len([event for event in events if event.event.type == "execution_finished"])
+        == 1
+    )
+
+
+@pytest.mark.asyncio
 async def test_respond_rejects_request_run_mismatch_before_resume() -> None:
     checkpointer = MemoryCheckpointer()
     pending = HitlRequest(
@@ -158,6 +223,44 @@ async def test_agent_prompt_and_session_share_one_admission_gate() -> None:
     release.set()
     assert await first == "run-1"
     assert [m.run_id for m in agent.state.messages] == ["run-1", "run-1"]
+
+
+@pytest.mark.asyncio
+async def test_agent_respond_checks_admission_before_loading_pending() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class CountingCheckpointer(MemoryCheckpointer):
+        load_pending_calls = 0
+
+        async def load_pending(self, thread_id: str):
+            self.load_pending_calls += 1
+            return await super().load_pending(thread_id)
+
+    async def slow_response(messages, model):
+        del messages, model
+        entered.set()
+        await release.wait()
+        return _answer()
+
+    provider = _provider()
+    provider.set_responses([slow_response])
+    checkpointer = CountingCheckpointer()
+    agent = Agent(
+        model=provider.model("faux-model"),
+        checkpointer=checkpointer,
+        thread_id="thread-1",
+    )
+    active = asyncio.create_task(agent.prompt("hi", run_id="run-1"))
+    await asyncio.wait_for(entered.wait(), timeout=1)
+    calls_before = checkpointer.load_pending_calls
+
+    with pytest.raises(ExecutionBusy):
+        await agent.respond(answer=True)
+
+    assert checkpointer.load_pending_calls == calls_before
+    release.set()
+    await active
 
 
 @pytest.mark.asyncio

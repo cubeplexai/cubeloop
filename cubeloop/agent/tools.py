@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from pydantic import ValidationError
 
 from cubeloop.hitl.exceptions import HitlControlException
+from cubeloop.session.turn_execution_context import ToolExecutionBinding
 
 from cubeloop.agent.types import (
     AfterToolCallContext,
@@ -43,7 +44,7 @@ class ToolCallBatch:
 @dataclass
 class _PreparedToolCall:
     tool_call: ToolCall
-    tool: AgentTool
+    tool: AgentTool | ToolExecutionBinding
     args: BaseModel | JsonObject
     hitl_trace: StructuredObject | None = None
 
@@ -207,7 +208,7 @@ async def _prepare_tool_call(
     binding = (
         turn_context.binding_for(tool_call.name) if turn_context is not None else None
     )
-    tool = binding.tool if binding is not None else None
+    tool: AgentTool | ToolExecutionBinding | None = binding
     if tool is None and context.tools:
         for t in context.tools:
             if t.name == tool_call.name:
