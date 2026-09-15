@@ -8,11 +8,13 @@ from pydantic import BaseModel
 from cubeloop import Agent
 from dataclasses import FrozenInstanceError
 
+from cubeloop.agent.loop import run_agent_loop
 from cubeloop.agent.tools import execute_tool_calls
 from cubeloop.agent.types import AgentContext, AgentTool, AgentToolResult
 from cubeloop.providers.base import (
     AssistantMessage,
     ReasoningControl,
+    StreamOptions,
     TextContent,
     ToolCall,
     ToolResultMessage,
@@ -174,6 +176,32 @@ async def test_fallback_legs_with_identical_model_specs_capture_separately() -> 
         "fallback:1",
     ]
     assert contexts[0].turn_id == contexts[1].turn_id
+
+
+@pytest.mark.asyncio
+async def test_model_attempt_callback_awaits_future_before_provider_call() -> None:
+    provider = FauxProvider(provider_id="faux")
+    provider.set_responses(
+        [AssistantMessage(content=[TextContent(text="done")], stop_reason="end_turn")]
+    )
+    gate: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+
+    task = asyncio.create_task(
+        run_agent_loop(
+            prompts=[UserMessage(content=[TextContent(text="hi")])],
+            context=AgentContext(system_prompt="", messages=[]),
+            model=provider.model("faux-model"),
+            convert_to_llm=lambda messages, *, ctx: messages,
+            stream_options=StreamOptions(on_model_attempt=lambda model: gate),
+            emit=lambda event: None,
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert provider.call_count == 0
+    gate.set_result(None)
+    _ = await task
+    assert provider.call_count == 1
 
 
 def test_turn_context_extension_is_immutable_and_rejects_rebinding() -> None:

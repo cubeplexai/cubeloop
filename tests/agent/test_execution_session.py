@@ -72,7 +72,7 @@ async def test_completed_checkpointed_attempt_reports_committed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_settlement_failure_returns_result_and_terminal_event() -> None:
+async def test_completed_attempt_skips_pending_read_and_publishes_terminal() -> None:
     class BrokenPendingCheckpointer(MemoryCheckpointer):
         async def load_pending(self, thread_id: str):
             del thread_id
@@ -90,11 +90,9 @@ async def test_settlement_failure_returns_result_and_terminal_event() -> None:
         PromptExecutionRequest(run_id="run-1", attempt_id="attempt-1", message="hi")
     )
 
-    assert result.outcome == "failed"
-    assert result.error is not None
-    assert result.error.kind == "finalization"
-    assert "pending storage unavailable" in result.error.message
-    assert result.checkpoint_committed is False
+    assert result.outcome == "completed"
+    assert result.error is None
+    assert result.checkpoint_committed is True
     finished = [event for event in events if event.event.type == "execution_finished"]
     assert len(finished) == 1
     assert finished[0].event.result == result
@@ -111,10 +109,17 @@ async def test_cancellation_during_settlement_still_publishes_terminal_event() -
             await asyncio.Future()
 
     agent = Agent(
-        model=_provider(_answer()).model("faux-model"),
+        model=_provider().model("faux-model"),
         checkpointer=SlowPendingCheckpointer(),
         thread_id="thread-1",
     )
+
+    async def suspend(message, *, run_id=None):
+        del message, run_id
+        agent._state.last_outcome = "suspended"
+        return "run-1"
+
+    agent._execute_prompt = suspend  # type: ignore[method-assign]
     events = []
     agent.session.subscribe(lambda event: events.append(event))
     task = asyncio.create_task(
@@ -375,6 +380,13 @@ async def test_hitl_resume_uses_tool_binding_captured_before_detach() -> None:
     await agent.session.request_detach()
     assert (await first).outcome == "suspended"
     tool.execute = replacement_execute
+
+    rejected = await agent.session.execute(
+        PromptExecutionRequest(
+            run_id="run-1", attempt_id="attempt-rejected", message="do not replace"
+        )
+    )
+    assert rejected.outcome == "failed"
 
     stale = await agent.session.execute(
         RespondExecutionRequest(
