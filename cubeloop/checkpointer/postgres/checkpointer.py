@@ -594,6 +594,31 @@ class PostgresCheckpointer:
             return HitlRequest.model_validate_json(raw)
         return HitlRequest.model_validate(raw)
 
+    async def clear_pending_request_if_matches(
+        self,
+        thread_id: str,
+        *,
+        question_id: str,
+    ) -> bool:
+        """Clear pending state only while it still names ``question_id``.
+
+        The predicate and mutation run in one PostgreSQL ``UPDATE``. If a
+        concurrent writer has already checkpointed a replacement request,
+        PostgreSQL re-evaluates the predicate after acquiring the row lock and
+        leaves that newer request intact.
+        """
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            result = await conn.execute(
+                "UPDATE cubepi_threads "
+                "SET pending_request = NULL, run_id = NULL, updated_at = now() "
+                "WHERE thread_id = $1 "
+                "AND pending_request->>'question_id' = $2",
+                thread_id,
+                question_id,
+            )
+        return result == "UPDATE 1"
+
     async def load_pending_run_id(self, thread_id: str) -> str | None:
         """Return the run_id of the currently pending HITL request.
 

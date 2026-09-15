@@ -186,6 +186,14 @@ So writing `{"foo": 1}` then `{"bar": 2}` leaves `{"foo": 1, "bar":
 2}`. Middleware can safely write partial dicts without losing prior
 keys.
 
+## Conditional pending cleanup
+
+Hosts that coordinate HITL resumes across workers can use
+`clear_pending_request_if_matches(thread_id, question_id=...)`. It clears the
+pending request and owning run ID only if the stored request still has that
+question ID. The comparison and clear are one PostgreSQL update, so a newer
+follow-up request written by another worker is never erased by stale cleanup.
+
 ## Forks
 
 `PostgresCheckpointer` implements the v4 `snapshot` / `fork` /

@@ -36,6 +36,36 @@ async def test_postgres_clear_pending_request(clean_db) -> None:
 
 
 @pytest.mark.asyncio
+async def test_postgres_compare_and_clear_pending_request(clean_db) -> None:
+    await _setup_schema_v2(clean_db)
+    async with PostgresCheckpointer(clean_db) as cp:
+        await cp.save_pending_request("t-1", _req(qid="q-current"), run_id="run-1")
+
+        assert not await cp.clear_pending_request_if_matches(
+            "t-1", question_id="q-replaced"
+        )
+        assert (await cp.load_pending_request("t-1")) == _req(qid="q-current")
+
+        assert await cp.clear_pending_request_if_matches("t-1", question_id="q-current")
+        assert await cp.load_pending_request("t-1") is None
+        assert await cp.load_pending_run_id("t-1") is None
+
+
+@pytest.mark.asyncio
+async def test_postgres_compare_and_clear_preserves_replacement(clean_db) -> None:
+    await _setup_schema_v2(clean_db)
+    async with PostgresCheckpointer(clean_db) as cp:
+        await cp.save_pending_request("t-1", _req(qid="q-answered"), run_id="run-1")
+        await cp.save_pending_request("t-1", _req(qid="q-follow-up"), run_id="run-1")
+
+        assert not await cp.clear_pending_request_if_matches(
+            "t-1", question_id="q-answered"
+        )
+        assert (await cp.load_pending_request("t-1")) == _req(qid="q-follow-up")
+        assert await cp.load_pending_run_id("t-1") == "run-1"
+
+
+@pytest.mark.asyncio
 async def test_postgres_pending_request_creates_thread_row_lazily(clean_db) -> None:
     """save_pending_request must INSERT … ON CONFLICT DO NOTHING for the thread row,
     so calling it on an unknown thread doesn't FK-violate."""
