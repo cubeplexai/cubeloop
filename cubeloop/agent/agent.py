@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import time
 import uuid
 from collections.abc import Sequence
@@ -563,6 +564,7 @@ class Agent(Generic[TMessage]):
                         self._extra.clear()
                         self._extra.update(data.extra)
                     self._checkpoint_loaded = True
+                    self.session._checkpoint_write_failed = False
 
                 await self._run_prompt(messages)
         except BaseException:
@@ -925,6 +927,7 @@ class Agent(Generic[TMessage]):
         from cubeloop.session import RespondExecutionRequest
 
         self.session._assert_idle()
+        answer = copy.deepcopy(answer)
         recovered_run_id: str | None = None
         if self.checkpointer is not None and self.thread_id is not None:
             load_pending = getattr(self.checkpointer, "load_pending", None)
@@ -980,6 +983,7 @@ class Agent(Generic[TMessage]):
                     self._extra.clear()
                     self._extra.update(data.extra or {})
                 self._checkpoint_loaded = True
+                self.session._checkpoint_write_failed = False
 
             loaded = await load_pending(self.thread_id)
             if loaded is None:

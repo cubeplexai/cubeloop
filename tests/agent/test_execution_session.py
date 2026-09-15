@@ -309,26 +309,16 @@ async def test_respond_snapshots_mutable_answer_before_checkpoint_await() -> Non
     assert channel.pending is not None
     question_id = channel.pending.question_id
     await agent.session.request_detach()
-    await first
+    _ = await first
     checkpointer.block_pending = True
     answer = {"answer": "original"}
-    resumed = asyncio.create_task(
-        agent.session.execute(
-            RespondExecutionRequest(
-                run_id="run-1",
-                attempt_id="attempt-2",
-                question_id=question_id,
-                answer=answer,
-            )
-        )
-    )
+    resumed = asyncio.create_task(agent.respond(question_id=question_id, answer=answer))
     await asyncio.wait_for(entered.wait(), timeout=1)
 
     answer["answer"] = "mutated"
     release.set()
-    result = await resumed
+    _ = await resumed
 
-    assert result.outcome == "completed"
     assert len(observed) == 1
     assert "original" in observed[0]
     assert "mutated" not in observed[0]
@@ -526,7 +516,8 @@ async def test_checkpoint_message_write_failure_marks_history_inconsistent() -> 
         AssistantMessage(
             content=[ToolCall(id="call-1", name="work", arguments={"value": "x"})],
             stop_reason="tool_use",
-        )
+        ),
+        _answer("next attempt"),
     )
     agent = Agent(
         model=provider.model("faux-model"),
@@ -541,6 +532,39 @@ async def test_checkpoint_message_write_failure_marks_history_inconsistent() -> 
 
     assert result.outcome == "failed"
     assert result.history_consistent is False
+
+    retry = await agent.session.execute(
+        PromptExecutionRequest(run_id="run-2", attempt_id="attempt-2", message="retry")
+    )
+    assert retry.outcome == "failed"
+    assert retry.history_consistent is False
+    assert retry.checkpoint_committed is False
+
+
+@pytest.mark.asyncio
+async def test_degraded_checkpointer_does_not_report_completed_commitment() -> None:
+    class DegradedCheckpointer:
+        async def load(self, thread_id):
+            return None
+
+        async def append(self, thread_id, messages):
+            return None
+
+        async def save_extra(self, thread_id, extra):
+            return None
+
+    agent = Agent(
+        model=_provider(_answer()).model("faux-model"),
+        checkpointer=DegradedCheckpointer(),
+        thread_id="thread-1",
+    )
+
+    result = await agent.session.execute(
+        PromptExecutionRequest(run_id="run-1", attempt_id="attempt-1", message="hi")
+    )
+
+    assert result.outcome == "completed"
+    assert result.checkpoint_committed is False
 
 
 @pytest.mark.asyncio
@@ -1039,6 +1063,6 @@ async def test_reconciled_input_process_control_releases_session_ownership() -> 
     release.set()
 
     with pytest.raises(ProcessExit, match="stop host"):
-        await task
+        _ = await task
     assert agent.session.active_attempt_id is None
     await asyncio.wait_for(agent.wait_for_idle(), timeout=1)
