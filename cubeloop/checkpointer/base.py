@@ -56,7 +56,7 @@ class Checkpointer(Protocol):
         Returns True when the matching pending request was cleared and False
         when the thread has no pending request or either identifier changed.
         """
-        ...
+        pass
 
     async def snapshot(self, thread_id: str, *, after_run_id: str) -> list[Message]:
         """Return messages of completed runs of `thread_id` up through
