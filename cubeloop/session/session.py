@@ -6,9 +6,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel
+
 from cubeloop.agent._tool_cycle import ToolCycleViolation, check_tool_cycle
-from cubeloop.agent.types import AgentEndEvent, MessageEndEvent
+from cubeloop.agent.types import AgentEndEvent, AgentSuspendedEvent, MessageEndEvent
 from cubeloop.checkpointer.base import CheckpointData
+from cubeloop.hitl.types import HitlRequest
 from cubeloop.session.events import (
     ExecutionEventEnvelope,
     ExecutionFinished,
@@ -77,6 +80,8 @@ class ExecutionSession:
         self._active_run_id: str | None = None
         self._cancel_requested = False
         self._accepting_input = False
+        self._idle = asyncio.Event()
+        self._idle.set()
         self._seq = 0
         self._publish_lock = asyncio.Lock()
         self._required_delivery_failure: DeliveryError | None = None
@@ -84,6 +89,7 @@ class ExecutionSession:
         self._input_status: dict[str, InputStatus] = {}
         self._delivery_errors: list[DeliveryError] = []
         self._turn_contexts: list[TurnExecutionContext] = []
+        self._pending_request: HitlRequest | None = None
 
     @property
     def active_attempt_id(self) -> str | None:
@@ -98,8 +104,8 @@ class ExecutionSession:
             existing = self._turn_contexts[index]
             if (
                 existing.turn_id == context.turn_id
-                and existing.model.id == context.model.id
-                and existing.model.provider_id == context.model.provider_id
+                and existing.model == context.model
+                and existing.model_attempt_id == context.model_attempt_id
             ):
                 self._turn_contexts[index] = context
                 return
@@ -132,6 +138,9 @@ class ExecutionSession:
     def request_cancel(self) -> None:
         self._cancel_requested = True
         self._agent.abort()
+
+    async def wait_for_idle(self) -> None:
+        await self._idle.wait()
 
     async def request_detach(self) -> None:
         if self._agent.channel is None or self._agent.channel.pending is None:
@@ -243,6 +252,7 @@ class ExecutionSession:
         """Execute one attempt and return settled lifecycle facts."""
         self._assert_idle()
 
+        self._idle.clear()
         self._active_attempt_id = request.attempt_id
         self._active_run_id = request.run_id
         self._cancel_requested = False
@@ -250,12 +260,14 @@ class ExecutionSession:
         self._seq = 0
         self._delivery_errors = []
         self._required_delivery_failure = None
-        self._input_status = {
-            input_id: status
-            for input_id, status in self._input_status.items()
-            if status != "queued"
-        }
+        for input_id, status in tuple(self._input_status.items()):
+            if status != "queued":
+                continue
+            self._agent._steering_queue.remove(input_id)
+            self._agent._follow_up_queue.remove(input_id)
+            del self._input_status[input_id]
         self._turn_contexts.clear()
+        self._pending_request = None
         caught: BaseException | None = None
         try:
             if isinstance(request, PromptExecutionRequest):
@@ -318,6 +330,7 @@ class ExecutionSession:
         finally:
             self._active_attempt_id = None
             self._active_run_id = None
+            self._idle.set()
 
     def _assert_idle(self) -> None:
         if self._active_attempt_id is not None or self._agent._run_lock.locked():
@@ -350,21 +363,25 @@ class ExecutionSession:
             return
         if isinstance(event, AgentEndEvent):
             self._accepting_input = False
+        if isinstance(event, AgentSuspendedEvent):
+            self._pending_request = event.pending_request.model_copy(deep=True)
+        committed_input_id: str | None = None
+        if isinstance(event, MessageEndEvent):
+            input_id = event.message.metadata.get("input_id")
+            if (
+                isinstance(input_id, str)
+                and self._input_status.get(input_id) == "queued"
+            ):
+                self._input_status[input_id] = "committed"
+                committed_input_id = input_id
         await self._publish(event, terminal=False)
-        if not isinstance(event, MessageEndEvent):
+        if committed_input_id is None:
             return
-        message = event.message
-        input_id = message.metadata.get("input_id")
-        if not isinstance(input_id, str):
-            return
-        if self._input_status.get(input_id) != "queued":
-            return
-        self._input_status[input_id] = "committed"
         durability: InputDurability = (
             "checkpoint" if self._has_durable_checkpoint() else "memory"
         )
         await self._publish(
-            InputCommitted(input_id=input_id, durability=durability),
+            InputCommitted(input_id=committed_input_id, durability=durability),
             terminal=False,
         )
 
@@ -404,7 +421,10 @@ class ExecutionSession:
                 if consumer.task is None:
                     consumer.task = asyncio.create_task(self._consume(consumer))
                 acknowledged = asyncio.get_running_loop().create_future()
-                item = _DeliveryItem(envelope=envelope, acknowledged=acknowledged)
+                item = _DeliveryItem(
+                    envelope=self._snapshot_envelope(envelope),
+                    acknowledged=acknowledged,
+                )
                 await asyncio.wait_for(
                     consumer.queue.put(item),
                     timeout=consumer.delivery_timeout,
@@ -443,6 +463,24 @@ class ExecutionSession:
                 f"{required_failure.message}"
             )
         return errors
+
+    @staticmethod
+    def _snapshot_envelope(
+        envelope: ExecutionEventEnvelope,
+    ) -> ExecutionEventEnvelope:
+        event = envelope.event
+        if isinstance(event, BaseModel):
+            event = event.model_copy(deep=True)
+        elif isinstance(event, ExecutionFinished):
+            pending = event.result.pending_request
+            result = replace(
+                event.result,
+                pending_request=(
+                    pending.model_copy(deep=True) if pending is not None else None
+                ),
+            )
+            event = ExecutionFinished(result=result)
+        return replace(envelope, event=event)
 
     async def _consume(self, consumer: _Consumer) -> None:
         while True:
@@ -499,6 +537,8 @@ class ExecutionSession:
             if load_pending is not None:
                 loaded = await load_pending(self._agent.thread_id)
                 pending = loaded[0] if loaded is not None else None
+        if pending is None:
+            pending = self._pending_request
 
         private_outcome = self._agent.state.last_outcome
         error: ExecutionError | None = None
@@ -514,18 +554,18 @@ class ExecutionSession:
         elif caught is not None:
             outcome = "failed"
             error = ExecutionError(
-                kind="finalization",
+                kind="execution",
                 message=str(caught),
                 cause=caught,
             )
+        elif private_outcome == "suspended":
+            outcome = "suspended"
         elif not history_consistent or private_outcome == "incomplete":
             outcome = "incomplete"
             error = ExecutionError(
                 kind="inconsistent",
                 message="execution history has incomplete tool-call results",
             )
-        elif private_outcome == "suspended":
-            outcome = "suspended"
         elif private_outcome == "complete" and not self._agent.state.error_message:
             outcome = "completed"
         else:

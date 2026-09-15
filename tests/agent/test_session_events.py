@@ -54,7 +54,78 @@ async def test_required_consumer_failure_fails_execution() -> None:
 
     assert result.outcome == "failed"
     assert result.error is not None
+    assert result.error.kind == "execution"
     assert "host-publisher" in result.error.message
+
+
+@pytest.mark.asyncio
+async def test_persisted_input_is_committed_before_required_delivery_failure() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def first_response(messages, model):
+        del messages, model
+        entered.set()
+        await release.wait()
+        return AssistantMessage(
+            content=[TextContent(text="first")], stop_reason="end_turn"
+        )
+
+    provider = FauxProvider(provider_id="faux")
+    provider.set_responses([first_response])
+    agent = Agent(model=provider.model("faux-model"))
+
+    async def fail_on_input(envelope):
+        event = envelope.event
+        if (
+            event.type == "message_end"
+            and event.message.metadata.get("input_id") == "input-1"
+        ):
+            raise RuntimeError("host unavailable")
+
+    agent.session.subscribe(fail_on_input, required=True, name="host")
+    task = asyncio.create_task(
+        agent.session.execute(
+            PromptExecutionRequest(run_id="run-1", attempt_id="attempt-1", message="hi")
+        )
+    )
+    await asyncio.wait_for(entered.wait(), timeout=1)
+    envelope = InputEnvelope(
+        input_id="input-1",
+        message=UserMessage(content=[TextContent(text="persist once")]),
+        mode="follow_up",
+    )
+    assert agent.session.submit_input(envelope).status == "queued"
+    release.set()
+
+    result = await task
+
+    assert result.outcome == "failed"
+    assert agent.session.submit_input(envelope).status == "committed"
+
+
+@pytest.mark.asyncio
+async def test_consumers_receive_isolated_agent_event_snapshots() -> None:
+    agent = _agent()
+    observed = []
+
+    def mutate_first(envelope):
+        event = envelope.event
+        if event.type == "message_start" and event.message.role == "user":
+            event.message.content[0].text = "mutated"
+
+    def observe_second(envelope):
+        event = envelope.event
+        if event.type == "message_start" and event.message.role == "user":
+            observed.append(event.message.content[0].text)
+
+    agent.session.subscribe(mutate_first, name="mutator")
+    agent.session.subscribe(observe_second, name="observer")
+
+    await agent.prompt("original", run_id="run-1")
+
+    assert observed == ["original"]
+    assert agent.state.messages[0].content[0].text == "original"
 
 
 @pytest.mark.asyncio

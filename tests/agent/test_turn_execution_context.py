@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from pydantic import BaseModel
 
@@ -148,6 +150,31 @@ async def test_retry_reuses_context_and_fallback_captures_new_model_view() -> No
     assert contexts[0].turn_id == contexts[1].turn_id
 
 
+@pytest.mark.asyncio
+async def test_fallback_legs_with_identical_model_specs_capture_separately() -> None:
+    primary = FauxProvider(provider_id="same").model("same-model")
+    fallback_provider = FauxProvider(provider_id="same")
+    fallback_provider.set_responses(
+        [AssistantMessage(content=[TextContent(text="done")], stop_reason="end_turn")]
+    )
+    agent = Agent(
+        model=FallbackBoundModel(
+            chain=(primary, fallback_provider.model("same-model")),
+            max_retries_per_model=0,
+        )
+    )
+
+    await agent.prompt("hi", run_id="run-1")
+
+    contexts = agent.session.turn_contexts
+    assert len(contexts) == 2
+    assert [context.model_attempt_id for context in contexts] == [
+        "fallback:0",
+        "fallback:1",
+    ]
+    assert contexts[0].turn_id == contexts[1].turn_id
+
+
 def test_turn_context_extension_is_immutable_and_rejects_rebinding() -> None:
     async def execute(tool_call_id, args, *, signal=None, on_update=None):
         del tool_call_id, args, signal, on_update
@@ -253,3 +280,56 @@ async def test_resolved_tool_extension_updates_public_session_context() -> None:
 
     assert len(agent.session.turn_contexts) == 1
     assert agent.session.turn_contexts[0].binding_for("work") is not None
+
+
+@pytest.mark.asyncio
+async def test_tool_batch_uses_captured_execution_mode() -> None:
+    order = []
+
+    async def execute(tool_call_id, args, *, signal=None, on_update=None):
+        del tool_call_id, signal, on_update
+        order.append(f"start:{args.value}")
+        await asyncio.sleep(0)
+        order.append(f"end:{args.value}")
+        return AgentToolResult(content=[TextContent(text="done")])
+
+    tool = AgentTool(
+        name="work",
+        description="work",
+        parameters=_Args,
+        execute=execute,
+        execution_mode="sequential",
+    )
+    provider = FauxProvider(provider_id="faux")
+    captured = TurnExecutionContext.capture(
+        turn_id="turn-1",
+        run_id="run-1",
+        attempt_id="attempt-1",
+        model=provider.model("faux-model").spec,
+        reasoning=ReasoningControl(),
+        system_prompt="",
+        messages=[],
+        tools=[tool],
+    )
+    context = AgentContext(
+        system_prompt="",
+        messages=[],
+        tools=[tool],
+        turn_execution_context=captured,
+    )
+    tool.execution_mode = "parallel"
+
+    await execute_tool_calls(
+        context,
+        AssistantMessage(
+            content=[
+                ToolCall(id="call-1", name="work", arguments={"value": "a"}),
+                ToolCall(id="call-2", name="work", arguments={"value": "b"}),
+            ],
+            stop_reason="tool_use",
+        ),
+        tool_execution="parallel",
+        emit=lambda event: None,
+    )
+
+    assert order == ["start:a", "end:a", "start:b", "end:b"]

@@ -7,9 +7,10 @@ import pytest
 from cubeloop import Agent
 from cubeloop.checkpointer.base import CheckpointData
 from cubeloop.checkpointer.memory import MemoryCheckpointer
-from cubeloop.hitl.channel import CheckpointedChannel
+from cubeloop.hitl.ask_user import ask_user_tool
+from cubeloop.hitl.channel import CheckpointedChannel, InMemoryChannel
 from cubeloop.hitl.types import ConfirmRequest, HitlRequest
-from cubeloop.providers.base import AssistantMessage, TextContent, UserMessage
+from cubeloop.providers.base import AssistantMessage, TextContent, ToolCall, UserMessage
 from cubeloop.providers.faux import FauxProvider
 from cubeloop.session import (
     ExecutionBusy,
@@ -264,6 +265,29 @@ async def test_agent_respond_checks_admission_before_loading_pending() -> None:
 
 
 @pytest.mark.asyncio
+async def test_wait_for_idle_includes_terminal_session_delivery() -> None:
+    terminal_entered = asyncio.Event()
+    release_terminal = asyncio.Event()
+
+    async def listener(envelope):
+        if envelope.event.type == "execution_finished":
+            terminal_entered.set()
+            await release_terminal.wait()
+
+    agent = Agent(model=_provider(_answer()).model("faux-model"))
+    agent.session.subscribe(listener)
+    execution = asyncio.create_task(agent.prompt("hi", run_id="run-1"))
+    await asyncio.wait_for(terminal_entered.wait(), timeout=1)
+    idle = asyncio.create_task(agent.wait_for_idle())
+    await asyncio.sleep(0)
+
+    assert not idle.done()
+    release_terminal.set()
+    assert await execution == "run-1"
+    await idle
+
+
+@pytest.mark.asyncio
 async def test_load_checkpoint_restores_extra_in_place_even_without_messages() -> None:
     checkpointer = MemoryCheckpointer()
     await checkpointer.save_extra("thread-1", {"todo": ["ship"]})
@@ -405,3 +429,43 @@ async def test_detach_rejects_outside_hitl_safe_point() -> None:
 
     with pytest.raises(RuntimeError, match="HITL safe point"):
         await agent.session.request_detach()
+
+
+@pytest.mark.asyncio
+async def test_in_memory_detach_returns_pending_request() -> None:
+    channel = InMemoryChannel(thread_id="thread-1")
+    provider = _provider(
+        AssistantMessage(
+            content=[
+                ToolCall(
+                    id="ask-1",
+                    name="ask_user",
+                    arguments={"questions": [{"key": "answer", "prompt": "Continue?"}]},
+                )
+            ],
+            stop_reason="tool_use",
+        )
+    )
+    agent = Agent(
+        model=provider.model("faux-model"),
+        tools=[ask_user_tool(channel)],
+        channel=channel,
+    )
+    execution = asyncio.create_task(
+        agent.session.execute(
+            PromptExecutionRequest(run_id="run-1", attempt_id="attempt-1", message="hi")
+        )
+    )
+    for _ in range(100):
+        if channel.pending is not None:
+            break
+        await asyncio.sleep(0.01)
+    assert channel.pending is not None
+    question_id = channel.pending.question_id
+
+    await agent.session.request_detach()
+    result = await execution
+
+    assert result.outcome == "suspended"
+    assert result.pending_request is not None
+    assert result.pending_request.question_id == question_id

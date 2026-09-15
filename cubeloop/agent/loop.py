@@ -774,14 +774,18 @@ async def _stream_assistant_response(
     previous_on_model_attempt = options.on_model_attempt
 
     async def _capture_model_attempt(model_spec) -> None:
+        from cubeloop.providers.fallback import get_attempt_index
         from cubeloop.session.turn_execution_context import TurnExecutionContext
 
         existing = context.turn_execution_context
+        fallback_index = get_attempt_index()
+        model_attempt_id = (
+            f"fallback:{fallback_index}" if fallback_index is not None else None
+        )
         if (
             existing is None
             or existing.turn_id != turn_id
-            or existing.model.id != model_spec.id
-            or existing.model.provider_id != model_spec.provider_id
+            or not existing.matches_model(model_spec, model_attempt_id)
         ):
             captured = TurnExecutionContext.capture(
                 turn_id=turn_id,
@@ -797,6 +801,7 @@ async def _stream_assistant_response(
                     if "policy_revision" in context.extra
                     else None
                 ),
+                model_attempt_id=model_attempt_id,
             )
             context.turn_id = turn_id
             context.turn_execution_context = captured
