@@ -48,6 +48,9 @@ async def test_mysql_compare_and_clear_pending_request(clean_mysql_db) -> None:
         assert not await cp.clear_pending_request_if_matches(
             "t-1", question_id="q-current", run_id="run-old"
         )
+        assert not await cp.clear_pending_request_if_matches(
+            "t-1", question_id="q-current", run_id="RUN-NEW"
+        )
         assert await cp.load_pending("t-1") == (_req(qid="q-current"), "run-new")
 
         assert await cp.clear_pending_request_if_matches(
