@@ -403,6 +403,19 @@ def _should_terminate(finalized: list[_FinalizedOutcome]) -> bool:
     return len(finalized) > 0 and all(f.result.terminate is True for f in finalized)
 
 
+def _execution_mode_for(context: AgentContext, tool_name: str) -> str | None:
+    turn_context = context.turn_execution_context
+    if turn_context is not None:
+        binding = turn_context.binding_for(tool_name)
+        if binding is not None:
+            return binding.execution_mode
+    if context.tools:
+        tool = next((tool for tool in context.tools if tool.name == tool_name), None)
+        if tool is not None:
+            return tool.execution_mode
+    return None
+
+
 async def execute_tool_calls(
     context: AgentContext,
     assistant_message: AssistantMessage,
@@ -417,11 +430,7 @@ async def execute_tool_calls(
     tool_calls = [c for c in assistant_message.content if isinstance(c, ToolCall)]
 
     has_sequential_raw = any(
-        t.execution_mode == "sequential"
-        for tc in tool_calls
-        if context.tools
-        for t in context.tools
-        if t.name == tc.name
+        _execution_mode_for(context, call.name) == "sequential" for call in tool_calls
     )
 
     if tool_execution == "sequential" or has_sequential_raw:
@@ -451,11 +460,8 @@ async def execute_tool_calls(
         )
 
     has_sequential_resolved = any(
-        t.execution_mode == "sequential"
-        for (rtc, _, _) in resolutions
-        if context.tools
-        for t in context.tools
-        if t.name == rtc.name
+        _execution_mode_for(context, call.name) == "sequential"
+        for call, _, _ in resolutions
     )
 
     if has_sequential_resolved:

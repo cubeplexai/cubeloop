@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from collections.abc import Awaitable, Callable
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel
 
@@ -70,6 +70,7 @@ class ToolExecutionBinding:
     parameters: type[BaseModel]
     execute: Callable[..., Awaitable[AgentToolResult]]
     hitl_builtin: bool
+    execution_mode: Literal["sequential", "parallel"] | None
     _source_id: int = field(repr=False)
 
     @classmethod
@@ -80,6 +81,7 @@ class ToolExecutionBinding:
             parameters=tool.parameters,
             execute=tool.execute,
             hitl_builtin=tool.hitl_builtin,
+            execution_mode=tool.execution_mode,
             _source_id=id(tool),
         )
 
@@ -95,6 +97,7 @@ class TurnExecutionContext:
     messages: tuple[MessageView, ...]
     tools: tuple[ToolExecutionBinding, ...]
     policy_revision: str | None = None
+    model_attempt_id: str | None = None
 
     @classmethod
     def capture(
@@ -109,6 +112,7 @@ class TurnExecutionContext:
         messages: list[Message],
         tools: list[AgentTool] | None,
         policy_revision: str | None = None,
+        model_attempt_id: str | None = None,
     ) -> TurnExecutionContext:
         return cls(
             turn_id=turn_id,
@@ -120,6 +124,12 @@ class TurnExecutionContext:
             messages=tuple(MessageView.capture(message) for message in messages),
             tools=tuple(ToolExecutionBinding.capture(tool) for tool in tools or []),
             policy_revision=policy_revision,
+            model_attempt_id=model_attempt_id,
+        )
+
+    def matches_model(self, model: Model, model_attempt_id: str | None) -> bool:
+        return (
+            self.model == _freeze(model) and self.model_attempt_id == model_attempt_id
         )
 
     def binding_for(self, name: str) -> ToolExecutionBinding | None:

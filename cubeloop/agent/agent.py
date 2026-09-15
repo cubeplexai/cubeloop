@@ -356,8 +356,7 @@ class Agent(Generic[TMessage]):
             self._active_signal.set()
 
     async def wait_for_idle(self) -> None:
-        if self._active_done:
-            await self._active_done.wait()
+        await self.session.wait_for_idle()
 
     def reset(self) -> None:
         self._state._messages = []

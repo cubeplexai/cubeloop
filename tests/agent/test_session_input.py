@@ -435,3 +435,47 @@ async def test_error_response_closes_input_before_agent_end_delivery() -> None:
     assert result.outcome == "failed"
     assert len(receipts) == 1
     assert receipts[0].status == "closed"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_attempt_discards_its_undrained_input_queue() -> None:
+    first_entered = asyncio.Event()
+    second_entered = asyncio.Event()
+    release_second = asyncio.Event()
+
+    async def first_response(messages, model):
+        del messages, model
+        first_entered.set()
+        await asyncio.Future()
+
+    async def second_response(messages, model):
+        del messages, model
+        second_entered.set()
+        await release_second.wait()
+        return AssistantMessage(
+            content=[TextContent(text="done")], stop_reason="end_turn"
+        )
+
+    provider = FauxProvider(provider_id="faux")
+    provider.set_responses([first_response, second_response])
+    agent = Agent(model=provider.model("faux-model"))
+    first = asyncio.create_task(agent.prompt("first", run_id="run-1"))
+    await asyncio.wait_for(first_entered.wait(), timeout=1)
+    envelope = InputEnvelope(
+        input_id="retry-id",
+        message=UserMessage(content=[TextContent(text="stale")]),
+        mode="follow_up",
+    )
+    assert agent.session.submit_input(envelope).status == "queued"
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+
+    second = asyncio.create_task(agent.prompt("second", run_id="run-2"))
+    await asyncio.wait_for(second_entered.wait(), timeout=1)
+
+    assert not agent._follow_up_queue.has_items()
+    assert agent.session.submit_input(envelope).status == "queued"
+    assert agent.session.cancel_input("retry-id").status == "cancelled"
+    release_second.set()
+    assert await second == "run-2"

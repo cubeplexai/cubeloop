@@ -74,6 +74,9 @@ class _FallbackRunState:
 _run_state: contextvars.ContextVar[_FallbackRunState | None] = contextvars.ContextVar(
     "cubepi_fallback_run_state", default=None
 )
+_attempt_index: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "cubeloop_fallback_attempt_index", default=None
+)
 
 
 def begin_fallback_run() -> contextvars.Token[_FallbackRunState | None]:
@@ -99,6 +102,11 @@ def get_active_index() -> int:
 
     state = _run_state.get()
     return 0 if state is None else state.active_index
+
+
+def get_attempt_index() -> int | None:
+    """Return the fallback leg currently entering its bound model."""
+    return _attempt_index.get()
 
 
 def set_active_index(index: int) -> None:
@@ -395,13 +403,17 @@ class FallbackBoundModel:
                 err: BaseException | None = None
                 first: StreamEvent | None = None
                 try:
-                    inner = await bound.stream(
-                        messages,
-                        system_prompt=system_prompt,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        options=options,
-                    )
+                    attempt_token = _attempt_index.set(index)
+                    try:
+                        inner = await bound.stream(
+                            messages,
+                            system_prompt=system_prompt,
+                            tools=tools,
+                            tool_choice=tool_choice,
+                            options=options,
+                        )
+                    finally:
+                        _attempt_index.reset(attempt_token)
                 except Exception as exc:
                     err = exc
                 else:
