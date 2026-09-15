@@ -93,6 +93,7 @@ class ExecutionSession:
         self._queued_inputs: dict[str, Message] = {}
         self._delivery_errors: list[DeliveryError] = []
         self._turn_contexts: list[TurnExecutionContext] = []
+        self._resume_turn_context: TurnExecutionContext | None = None
         self._pending_request: HitlRequest | None = None
 
     @property
@@ -263,6 +264,22 @@ class ExecutionSession:
         self._input_durability.clear()
         self._queued_inputs.clear()
 
+    def _reconcile_consumed_inputs(self) -> list[str]:
+        committed: list[str] = []
+        for input_id, status in tuple(self._input_status.items()):
+            if status != "queued":
+                continue
+            queued_message = self._queued_inputs.get(input_id)
+            if queued_message is None or not any(
+                message is queued_message for message in self._agent.state.messages
+            ):
+                continue
+            self._input_status[input_id] = "committed"
+            self._input_durability[input_id] = "memory"
+            self._queued_inputs.pop(input_id, None)
+            committed.append(input_id)
+        return committed
+
     async def execute(self, request: ExecutionRequest) -> ExecutionResult:
         """Execute one attempt and return settled lifecycle facts."""
         self._assert_idle()
@@ -275,34 +292,36 @@ class ExecutionSession:
         self._accepting_input = True
         self._seq = 0
         self._delivery_errors = []
+        self._reconcile_consumed_inputs()
         for input_id, status in tuple(self._input_status.items()):
             if status != "queued":
                 continue
             removed = self._agent._steering_queue.remove(input_id)
             removed = self._agent._follow_up_queue.remove(input_id) or removed
-            queued_message = self._queued_inputs.get(input_id)
-            if (
-                not removed
-                and queued_message is not None
-                and any(
-                    message is queued_message for message in self._agent.state.messages
-                )
-            ):
-                self._input_status[input_id] = "committed"
-                self._input_durability[input_id] = "memory"
-                self._queued_inputs.pop(input_id, None)
-                continue
             del self._input_status[input_id]
             self._input_durability.pop(input_id, None)
             self._queued_inputs.pop(input_id, None)
+        self._resume_turn_context = None
+        if isinstance(request, RespondExecutionRequest):
+            self._resume_turn_context = next(
+                (
+                    context
+                    for context in reversed(self._turn_contexts)
+                    if context.run_id == request.run_id
+                ),
+                None,
+            )
         self._turn_contexts.clear()
         self._pending_request = None
         caught: BaseException | None = None
         try:
             if isinstance(request, PromptExecutionRequest):
-                await self._agent._execute_prompt(
-                    request.message, run_id=request.run_id
-                )
+                payload = request.message
+                if isinstance(payload, list):
+                    payload = [message.model_copy(deep=True) for message in payload]
+                elif not isinstance(payload, str):
+                    payload = payload.model_copy(deep=True)
+                await self._agent._execute_prompt(payload, run_id=request.run_id)
             elif isinstance(request, RespondExecutionRequest):
                 await self._agent._execute_respond(
                     question_id=request.question_id,
@@ -323,6 +342,19 @@ class ExecutionSession:
         finally:
             self._accepting_input = False
             self._accepting_cancel = False
+
+        try:
+            for input_id in self._reconcile_consumed_inputs():
+                await self._publish(
+                    InputCommitted(input_id=input_id, durability="memory"),
+                    terminal=False,
+                )
+        except asyncio.CancelledError as exc:
+            if caught is None:
+                caught = exc
+        except Exception as exc:
+            if caught is None:
+                caught = exc
 
         try:
             try:
@@ -366,6 +398,7 @@ class ExecutionSession:
     def _release_attempt(self) -> None:
         self._active_attempt_id = None
         self._active_run_id = None
+        self._resume_turn_context = None
         self._idle.set()
 
     def _assert_idle(self) -> None:
