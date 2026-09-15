@@ -607,6 +607,8 @@ async def test_append_failure_keeps_drained_input_deduplicated_in_memory() -> No
         checkpointer=FailingInputCheckpointer(),
         thread_id="thread-1",
     )
+    events = []
+    agent.session.subscribe(lambda event: events.append(event))
     first = asyncio.create_task(
         agent.session.execute(
             PromptExecutionRequest(
@@ -625,6 +627,15 @@ async def test_append_failure_keeps_drained_input_deduplicated_in_memory() -> No
     first_result = await first
     assert first_result.outcome == "failed"
     assert first_result.error is not None
+    receipt = agent.session.cancel_input("input-1")
+    assert receipt.status == "committed"
+    assert receipt.durability == "memory"
+    assert any(
+        event.event.type == "input_committed"
+        and event.event.input_id == "input-1"
+        and event.event.durability == "memory"
+        for event in events
+    )
 
     second = asyncio.create_task(agent.prompt("second", run_id="run-2"))
     await asyncio.wait_for(second_entered.wait(), timeout=1)

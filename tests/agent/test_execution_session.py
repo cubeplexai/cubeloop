@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from cubeloop import Agent
+from cubeloop.agent.types import AfterToolCallResult, AgentToolResult
 from cubeloop.checkpointer.base import CheckpointData
 from cubeloop.checkpointer.memory import MemoryCheckpointer
 from cubeloop.hitl.ask_user import ask_user_tool
@@ -14,6 +15,7 @@ from cubeloop.providers.base import AssistantMessage, TextContent, ToolCall, Use
 from cubeloop.providers.faux import FauxProvider
 from cubeloop.session import (
     ExecutionBusy,
+    InputEnvelope,
     PromptExecutionRequest,
     RespondExecutionRequest,
 )
@@ -193,6 +195,196 @@ async def test_respond_rejects_request_run_mismatch_before_resume() -> None:
     assert result.error is not None
     assert "does not match" in result.error.message
     assert await checkpointer.load_pending("thread-1") == (pending, "run-real")
+
+
+@pytest.mark.asyncio
+async def test_prompt_snapshots_mutable_payload_before_checkpoint_await() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class SlowClaimCheckpointer(MemoryCheckpointer):
+        async def claim_run(self, thread_id: str, run_id: str) -> None:
+            entered.set()
+            await release.wait()
+            await super().claim_run(thread_id, run_id)
+
+    checkpointer = SlowClaimCheckpointer()
+    agent = Agent(
+        model=_provider(_answer()).model("faux-model"),
+        checkpointer=checkpointer,
+        thread_id="thread-1",
+    )
+    message = UserMessage(
+        content=[TextContent(text="original")],
+        metadata={"nested": {"value": 1}},
+        run_id="run-1",
+    )
+    payload = [message]
+    task = asyncio.create_task(
+        agent.session.execute(
+            PromptExecutionRequest(
+                run_id="run-1", attempt_id="attempt-1", message=payload
+            )
+        )
+    )
+    await asyncio.wait_for(entered.wait(), timeout=1)
+
+    message.content[0].text = "mutated"
+    message.metadata["nested"]["value"] = 2
+    message.run_id = "other-run"
+    payload.append(UserMessage(content=[TextContent(text="late")]))
+    release.set()
+    result = await task
+
+    assert result.outcome == "completed"
+    user_messages = [item for item in agent.state.messages if item.role == "user"]
+    assert len(user_messages) == 1
+    assert user_messages[0].content[0].text == "original"
+    assert user_messages[0].metadata["nested"]["value"] == 1
+    assert user_messages[0].run_id == "run-1"
+
+
+@pytest.mark.asyncio
+async def test_hitl_resume_uses_tool_binding_captured_before_detach() -> None:
+    checkpointer = MemoryCheckpointer()
+    channel = CheckpointedChannel(
+        checkpointer=checkpointer,
+        thread_id="thread-1",
+        run_id="run-1",
+    )
+    tool = ask_user_tool(channel)
+    provider = _provider(
+        AssistantMessage(
+            content=[
+                ToolCall(
+                    id="ask-1",
+                    name="ask_user",
+                    arguments={"questions": [{"key": "answer", "prompt": "Continue?"}]},
+                )
+            ],
+            stop_reason="tool_use",
+        ),
+        _answer(),
+    )
+    replacement_calls = 0
+
+    async def replacement_execute(tool_call_id, args, *, signal=None, on_update=None):
+        nonlocal replacement_calls
+        del tool_call_id, args, signal, on_update
+        replacement_calls += 1
+        return AgentToolResult(content=[TextContent(text="replacement")])
+
+    agent = Agent(
+        model=provider.model("faux-model"),
+        tools=[tool],
+        channel=channel,
+        checkpointer=checkpointer,
+        thread_id="thread-1",
+    )
+    first = asyncio.create_task(
+        agent.session.execute(
+            PromptExecutionRequest(run_id="run-1", attempt_id="attempt-1", message="hi")
+        )
+    )
+    for _ in range(100):
+        if channel.pending is not None:
+            break
+        await asyncio.sleep(0.01)
+    assert channel.pending is not None
+    question_id = channel.pending.question_id
+    await agent.session.request_detach()
+    assert (await first).outcome == "suspended"
+    tool.execute = replacement_execute
+
+    resumed = await agent.session.execute(
+        RespondExecutionRequest(
+            run_id="run-1",
+            attempt_id="attempt-2",
+            question_id=question_id,
+            answer={"answer": "yes"},
+        )
+    )
+
+    assert resumed.outcome == "completed"
+    assert replacement_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_terminating_hitl_resume_drains_accepted_follow_up() -> None:
+    checkpointer = MemoryCheckpointer()
+    channel = CheckpointedChannel(
+        checkpointer=checkpointer,
+        thread_id="thread-1",
+        run_id="run-1",
+    )
+    resume_entered = asyncio.Event()
+    release_resume = asyncio.Event()
+
+    async def terminate_after_resume(context, signal=None):
+        del context, signal
+        resume_entered.set()
+        await release_resume.wait()
+        return AfterToolCallResult(terminate=True)
+
+    provider = _provider(
+        AssistantMessage(
+            content=[
+                ToolCall(
+                    id="ask-1",
+                    name="ask_user",
+                    arguments={"questions": [{"key": "answer", "prompt": "Continue?"}]},
+                )
+            ],
+            stop_reason="tool_use",
+        ),
+        _answer("follow-up handled"),
+    )
+    agent = Agent(
+        model=provider.model("faux-model"),
+        tools=[ask_user_tool(channel)],
+        channel=channel,
+        checkpointer=checkpointer,
+        thread_id="thread-1",
+        after_tool_call=terminate_after_resume,
+    )
+    first = asyncio.create_task(
+        agent.session.execute(
+            PromptExecutionRequest(run_id="run-1", attempt_id="attempt-1", message="hi")
+        )
+    )
+    for _ in range(100):
+        if channel.pending is not None:
+            break
+        await asyncio.sleep(0.01)
+    assert channel.pending is not None
+    question_id = channel.pending.question_id
+    await agent.session.request_detach()
+    assert (await first).outcome == "suspended"
+    resumed = asyncio.create_task(
+        agent.session.execute(
+            RespondExecutionRequest(
+                run_id="run-1",
+                attempt_id="attempt-2",
+                question_id=question_id,
+                answer={"answer": "yes"},
+            )
+        )
+    )
+    await asyncio.wait_for(resume_entered.wait(), timeout=1)
+    envelope = InputEnvelope(
+        input_id="follow-up-1",
+        message=UserMessage(content=[TextContent(text="one more thing")]),
+        mode="follow_up",
+    )
+    assert agent.session.submit_input(envelope).status == "queued"
+    release_resume.set()
+    result = await resumed
+
+    assert result.outcome == "completed"
+    receipt = agent.session.cancel_input("follow-up-1")
+    assert receipt.status == "committed"
+    assert receipt.durability == "checkpoint"
+    assert provider.call_count == 2
 
 
 @pytest.mark.asyncio

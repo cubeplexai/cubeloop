@@ -887,6 +887,7 @@ class Agent(Generic[TMessage]):
             extra=self._extra,
             run_id=self._state.active_run_id,
             attempt_id=self.session.active_attempt_id,
+            turn_execution_context=self.session._resume_turn_context,
             on_turn_context=self.session._capture_turn_context,
             set_input_admission=self.session._set_input_admission,
         )

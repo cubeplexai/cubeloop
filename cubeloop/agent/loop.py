@@ -372,7 +372,17 @@ async def _run_agent_loop_resume_body(  # pragma: no cover — E2E tested
             current_context.messages.append(msg)
             new_messages.append(msg)
 
+    resumed_follow_ups: list[Message] = []
+    if get_follow_up_messages:
+        resumed_follow_ups = await get_follow_up_messages() or []
+        for msg in resumed_follow_ups:
+            await emit_event(emit, MessageStartEvent(message=msg))
+            await emit_event(emit, MessageEndEvent(message=msg))
+            current_context.messages.append(msg)
+            new_messages.append(msg)
+
     # Honor should_stop_after_turn (codex BLOCKING: previous draft skipped this).
+    should_stop = False
     if should_stop_after_turn:
         stop_ctx = ShouldStopAfterTurnContext(
             message=last,
@@ -380,7 +390,8 @@ async def _run_agent_loop_resume_body(  # pragma: no cover — E2E tested
             context=current_context,
             new_messages=new_messages,
         )
-        if await should_stop_after_turn(stop_ctx):
+        should_stop = await should_stop_after_turn(stop_ctx)
+        if should_stop and not resumed_follow_ups:
             if current_context.set_input_admission is not None:
                 current_context.set_input_admission(False)
             await emit_event(emit, AgentEndEvent(messages=new_messages))
@@ -389,7 +400,7 @@ async def _run_agent_loop_resume_body(  # pragma: no cover — E2E tested
             return new_messages
 
     # Terminate-by-tool semantics (codex BLOCKING: previous draft ignored).
-    if terminated_by_tool:
+    if terminated_by_tool and not resumed_follow_ups:
         if current_context.set_input_admission is not None:
             current_context.set_input_admission(False)
         await emit_event(emit, AgentEndEvent(messages=new_messages))
