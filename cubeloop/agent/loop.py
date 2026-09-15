@@ -381,6 +381,9 @@ async def _run_agent_loop_resume_body(  # pragma: no cover — E2E tested
             current_context.messages.append(msg)
             new_messages.append(msg)
 
+    if current_context.set_input_admission is not None:
+        current_context.set_input_admission(False)
+
     # Honor should_stop_after_turn (codex BLOCKING: previous draft skipped this).
     should_stop = False
     if should_stop_after_turn:
@@ -401,14 +404,14 @@ async def _run_agent_loop_resume_body(  # pragma: no cover — E2E tested
 
     # Terminate-by-tool semantics (codex BLOCKING: previous draft ignored).
     if terminated_by_tool and not resumed_follow_ups:
-        if current_context.set_input_admission is not None:
-            current_context.set_input_admission(False)
         await emit_event(emit, AgentEndEvent(messages=new_messages))
         if set_outcome is not None:
             set_outcome("complete")
         return new_messages
 
     # Fall through to the normal loop for the next model turn.
+    if current_context.set_input_admission is not None:
+        current_context.set_input_admission(True)
     await _run_loop(
         current_context=current_context,
         new_messages=new_messages,

@@ -3,9 +3,14 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from pydantic import BaseModel
 
 from cubeloop import Agent
-from cubeloop.agent.types import AfterToolCallResult, AgentToolResult
+from cubeloop.agent.types import (
+    AfterToolCallResult,
+    AgentTool,
+    AgentToolResult,
+)
 from cubeloop.checkpointer.base import CheckpointData
 from cubeloop.checkpointer.memory import MemoryCheckpointer
 from cubeloop.hitl.ask_user import ask_user_tool
@@ -245,6 +250,91 @@ async def test_prompt_snapshots_mutable_payload_before_checkpoint_await() -> Non
 
 
 @pytest.mark.asyncio
+async def test_respond_snapshots_mutable_answer_before_checkpoint_await() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class SlowPendingCheckpointer(MemoryCheckpointer):
+        block_pending = False
+
+        async def load_pending(self, thread_id: str):
+            if self.block_pending:
+                entered.set()
+                await release.wait()
+            return await super().load_pending(thread_id)
+
+    checkpointer = SlowPendingCheckpointer()
+    channel = CheckpointedChannel(
+        checkpointer=checkpointer,
+        thread_id="thread-1",
+        run_id="run-1",
+    )
+    observed: list[str] = []
+
+    async def final_response(messages, model):
+        del model
+        observed.append(messages[-1].content[0].text)
+        return _answer()
+
+    provider = _provider()
+    provider.set_responses(
+        [
+            AssistantMessage(
+                content=[
+                    ToolCall(
+                        id="ask-1",
+                        name="ask_user",
+                        arguments={
+                            "questions": [{"key": "answer", "prompt": "Continue?"}]
+                        },
+                    )
+                ],
+                stop_reason="tool_use",
+            ),
+            final_response,
+        ]
+    )
+    agent = Agent(
+        model=provider.model("faux-model"),
+        tools=[ask_user_tool(channel)],
+        channel=channel,
+        checkpointer=checkpointer,
+        thread_id="thread-1",
+    )
+    first = asyncio.create_task(agent.prompt("hi", run_id="run-1"))
+    for _ in range(100):
+        if channel.pending is not None:
+            break
+        await asyncio.sleep(0.01)
+    assert channel.pending is not None
+    question_id = channel.pending.question_id
+    await agent.session.request_detach()
+    await first
+    checkpointer.block_pending = True
+    answer = {"answer": "original"}
+    resumed = asyncio.create_task(
+        agent.session.execute(
+            RespondExecutionRequest(
+                run_id="run-1",
+                attempt_id="attempt-2",
+                question_id=question_id,
+                answer=answer,
+            )
+        )
+    )
+    await asyncio.wait_for(entered.wait(), timeout=1)
+
+    answer["answer"] = "mutated"
+    release.set()
+    result = await resumed
+
+    assert result.outcome == "completed"
+    assert len(observed) == 1
+    assert "original" in observed[0]
+    assert "mutated" not in observed[0]
+
+
+@pytest.mark.asyncio
 async def test_hitl_resume_uses_tool_binding_captured_before_detach() -> None:
     checkpointer = MemoryCheckpointer()
     channel = CheckpointedChannel(
@@ -296,6 +386,16 @@ async def test_hitl_resume_uses_tool_binding_captured_before_detach() -> None:
     assert (await first).outcome == "suspended"
     tool.execute = replacement_execute
 
+    stale = await agent.session.execute(
+        RespondExecutionRequest(
+            run_id="run-1",
+            attempt_id="attempt-stale",
+            question_id="stale-question",
+            answer={"answer": "no"},
+        )
+    )
+    assert stale.outcome == "failed"
+
     resumed = await agent.session.execute(
         RespondExecutionRequest(
             run_id="run-1",
@@ -319,12 +419,20 @@ async def test_terminating_hitl_resume_drains_accepted_follow_up() -> None:
     )
     resume_entered = asyncio.Event()
     release_resume = asyncio.Event()
+    stop_entered = asyncio.Event()
+    release_stop = asyncio.Event()
 
     async def terminate_after_resume(context, signal=None):
         del context, signal
         resume_entered.set()
         await release_resume.wait()
         return AfterToolCallResult(terminate=True)
+
+    async def slow_stop(context):
+        del context
+        stop_entered.set()
+        await release_stop.wait()
+        return True
 
     provider = _provider(
         AssistantMessage(
@@ -346,6 +454,7 @@ async def test_terminating_hitl_resume_drains_accepted_follow_up() -> None:
         checkpointer=checkpointer,
         thread_id="thread-1",
         after_tool_call=terminate_after_resume,
+        should_stop_after_turn=slow_stop,
     )
     first = asyncio.create_task(
         agent.session.execute(
@@ -378,6 +487,16 @@ async def test_terminating_hitl_resume_drains_accepted_follow_up() -> None:
     )
     assert agent.session.submit_input(envelope).status == "queued"
     release_resume.set()
+    await asyncio.wait_for(stop_entered.wait(), timeout=1)
+    late = agent.session.submit_input(
+        InputEnvelope(
+            input_id="too-late",
+            message=UserMessage(content=[TextContent(text="missed drain")]),
+            mode="follow_up",
+        )
+    )
+    assert late.status == "closed"
+    release_stop.set()
     result = await resumed
 
     assert result.outcome == "completed"
@@ -385,6 +504,43 @@ async def test_terminating_hitl_resume_drains_accepted_follow_up() -> None:
     assert receipt.status == "committed"
     assert receipt.durability == "checkpoint"
     assert provider.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_message_write_failure_marks_history_inconsistent() -> None:
+    class Args(BaseModel):
+        value: str
+
+    class FailingToolResultCheckpointer(MemoryCheckpointer):
+        async def append(self, thread_id, messages):
+            if any(message.role == "tool_result" for message in messages):
+                raise RuntimeError("tool result write failed")
+            await super().append(thread_id, messages)
+
+    async def execute(tool_call_id, args, *, signal=None, on_update=None):
+        del tool_call_id, args, signal, on_update
+        return AgentToolResult(content=[TextContent(text="done")])
+
+    tool = AgentTool(name="work", description="work", parameters=Args, execute=execute)
+    provider = _provider(
+        AssistantMessage(
+            content=[ToolCall(id="call-1", name="work", arguments={"value": "x"})],
+            stop_reason="tool_use",
+        )
+    )
+    agent = Agent(
+        model=provider.model("faux-model"),
+        tools=[tool],
+        checkpointer=FailingToolResultCheckpointer(),
+        thread_id="thread-1",
+    )
+
+    result = await agent.session.execute(
+        PromptExecutionRequest(run_id="run-1", attempt_id="attempt-1", message="hi")
+    )
+
+    assert result.outcome == "failed"
+    assert result.history_consistent is False
 
 
 @pytest.mark.asyncio
@@ -525,6 +681,8 @@ async def test_load_checkpoint_restores_extra_in_place_even_without_messages() -
         thread_id="thread-1",
     )
     live_context = agent.session.state_context
+    agent.session._input_status["memory-input"] = "committed"
+    agent.session._input_durability["memory-input"] = "memory"
 
     loaded = await agent.session.load_checkpoint()
 
@@ -532,6 +690,8 @@ async def test_load_checkpoint_restores_extra_in_place_even_without_messages() -
     assert loaded.messages == []
     assert live_context is agent.session.state_context
     assert live_context == {"todo": ["ship"]}
+    assert "memory-input" not in agent.session._input_status
+    assert "memory-input" not in agent.session._input_durability
     live_context["memory"] = "pinned"
     await agent.prompt("hi", run_id="run-1")
     persisted = await checkpointer.load("thread-1")
@@ -831,5 +991,54 @@ async def test_process_control_exception_releases_session_ownership() -> None:
             PromptExecutionRequest(run_id="run-1", attempt_id="attempt-1", message="hi")
         )
 
+    assert agent.session.active_attempt_id is None
+    await asyncio.wait_for(agent.wait_for_idle(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_reconciled_input_process_control_releases_session_ownership() -> None:
+    class ProcessExit(BaseException):
+        pass
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    agent = Agent(model=_provider().model("faux-model"))
+
+    async def consume_without_publishing(message, *, run_id=None):
+        del message, run_id
+        entered.set()
+        await release.wait()
+        accepted = agent._follow_up_queue.drain()
+        agent._state._messages.extend(accepted)
+        agent._state.last_outcome = "complete"
+        return "run-1"
+
+    agent._execute_prompt = consume_without_publishing  # type: ignore[method-assign]
+
+    def stop_host(envelope):
+        if envelope.event.type == "input_committed":
+            raise ProcessExit("stop host")
+
+    agent.session.subscribe(stop_host)
+    task = asyncio.create_task(
+        agent.session.execute(
+            PromptExecutionRequest(run_id="run-1", attempt_id="attempt-1", message="hi")
+        )
+    )
+    await asyncio.wait_for(entered.wait(), timeout=1)
+    assert (
+        agent.session.submit_input(
+            InputEnvelope(
+                input_id="input-1",
+                message=UserMessage(content=[TextContent(text="accepted")]),
+                mode="follow_up",
+            )
+        ).status
+        == "queued"
+    )
+    release.set()
+
+    with pytest.raises(ProcessExit, match="stop host"):
+        await task
     assert agent.session.active_attempt_id is None
     await asyncio.wait_for(agent.wait_for_idle(), timeout=1)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -92,6 +93,7 @@ class ExecutionSession:
         self._input_durability: dict[str, InputDurability] = {}
         self._queued_inputs: dict[str, Message] = {}
         self._delivery_errors: list[DeliveryError] = []
+        self._checkpoint_write_failed = False
         self._turn_contexts: list[TurnExecutionContext] = []
         self._resume_turn_context: TurnExecutionContext | None = None
         self._pending_request: HitlRequest | None = None
@@ -138,6 +140,7 @@ class ExecutionSession:
             self._agent._extra.clear()
             self._agent._extra.update(extra)
             self._agent._checkpoint_loaded = True
+            self._drop_memory_input_receipts()
             return data
 
     def request_cancel(self) -> None:
@@ -264,6 +267,17 @@ class ExecutionSession:
         self._input_durability.clear()
         self._queued_inputs.clear()
 
+    def _drop_memory_input_receipts(self) -> None:
+        for input_id, durability in tuple(self._input_durability.items()):
+            if durability != "memory":
+                continue
+            self._input_status.pop(input_id, None)
+            self._input_durability.pop(input_id, None)
+            self._queued_inputs.pop(input_id, None)
+
+    def _mark_checkpoint_write_failure(self) -> None:
+        self._checkpoint_write_failed = True
+
     def _reconcile_consumed_inputs(self) -> list[str]:
         committed: list[str] = []
         for input_id, status in tuple(self._input_status.items()):
@@ -292,12 +306,13 @@ class ExecutionSession:
         self._accepting_input = True
         self._seq = 0
         self._delivery_errors = []
+        self._checkpoint_write_failed = False
         self._reconcile_consumed_inputs()
         for input_id, status in tuple(self._input_status.items()):
             if status != "queued":
                 continue
-            removed = self._agent._steering_queue.remove(input_id)
-            removed = self._agent._follow_up_queue.remove(input_id) or removed
+            self._agent._steering_queue.remove(input_id)
+            self._agent._follow_up_queue.remove(input_id)
             del self._input_status[input_id]
             self._input_durability.pop(input_id, None)
             self._queued_inputs.pop(input_id, None)
@@ -312,6 +327,8 @@ class ExecutionSession:
                 None,
             )
         self._turn_contexts.clear()
+        if self._resume_turn_context is not None:
+            self._turn_contexts.append(self._resume_turn_context)
         self._pending_request = None
         caught: BaseException | None = None
         try:
@@ -323,9 +340,10 @@ class ExecutionSession:
                     payload = payload.model_copy(deep=True)
                 await self._agent._execute_prompt(payload, run_id=request.run_id)
             elif isinstance(request, RespondExecutionRequest):
+                answer = copy.deepcopy(request.answer)
                 await self._agent._execute_respond(
                     question_id=request.question_id,
-                    answer=request.answer,
+                    answer=answer,
                     expected_run_id=request.run_id,
                 )
             elif isinstance(request, ContinueExecutionRequest):
@@ -355,6 +373,9 @@ class ExecutionSession:
         except Exception as exc:
             if caught is None:
                 caught = exc
+        except BaseException:
+            self._release_attempt()
+            raise
 
         try:
             try:
@@ -598,7 +619,7 @@ class ExecutionSession:
         request: ExecutionRequest,
         caught: BaseException | None,
     ) -> ExecutionResult:
-        history_consistent = True
+        tool_cycle_consistent = True
         run_messages = [
             message
             for message in self._agent.state.messages
@@ -607,7 +628,8 @@ class ExecutionSession:
         try:
             check_tool_cycle(run_messages)
         except ToolCycleViolation:
-            history_consistent = False
+            tool_cycle_consistent = False
+        history_consistent = tool_cycle_consistent and not self._checkpoint_write_failed
 
         pending = None
         pending_is_durable = False
@@ -651,7 +673,7 @@ class ExecutionSession:
             )
         elif private_outcome == "suspended":
             outcome = "suspended"
-        elif not history_consistent or private_outcome == "incomplete":
+        elif not tool_cycle_consistent or private_outcome == "incomplete":
             outcome = "incomplete"
             error = ExecutionError(
                 kind="inconsistent",
