@@ -442,6 +442,18 @@ class TestAgentReset:
         assert agent._steering_queue.drain() == []
         assert agent._follow_up_queue.drain() == []
 
+    async def test_reset_clears_session_input_receipts(self):
+        provider = FauxProvider(provider_id="faux")
+        agent = Agent(model=provider.model("faux-1"))
+        agent.session._input_status["input-1"] = "committed"
+        agent.session._input_durability["input-1"] = "memory"
+
+        agent.reset()
+
+        assert agent.session._input_status == {}
+        assert agent.session._input_durability == {}
+        assert agent.session._queued_inputs == {}
+
 
 class TestAgentAbortSignal:
     async def test_abort_sets_signal_during_active_run(self):

@@ -366,6 +366,7 @@ class Agent(Generic[TMessage]):
         self._state.error_message = None
         self._steering_queue.clear()
         self._follow_up_queue.clear()
+        self.session._reset_inputs()
         self._checkpoint_loaded = False
 
     def _outcome_sink(self) -> Callable[[str], None]:
