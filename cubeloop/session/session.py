@@ -89,6 +89,7 @@ class ExecutionSession:
         self._required_delivery_failure: tuple[_Consumer, DeliveryError] | None = None
         self._consumers: list[_Consumer] = []
         self._input_status: dict[str, InputStatus] = {}
+        self._input_durability: dict[str, InputDurability] = {}
         self._queued_inputs: dict[str, Message] = {}
         self._delivery_errors: list[DeliveryError] = []
         self._turn_contexts: list[TurnExecutionContext] = []
@@ -193,11 +194,7 @@ class ExecutionSession:
     def submit_input(self, envelope: InputEnvelope) -> InputReceipt:
         existing = self._input_status.get(envelope.input_id)
         if existing is not None:
-            durability: InputDurability | None = None
-            if existing == "committed":
-                durability = (
-                    "checkpoint" if self._has_durable_checkpoint() else "memory"
-                )
+            durability = self._input_durability.get(envelope.input_id)
             return InputReceipt(
                 input_id=envelope.input_id,
                 status=existing,
@@ -222,6 +219,7 @@ class ExecutionSession:
             if terminal_id is None:
                 return InputReceipt(input_id=envelope.input_id, status="closed")
             del self._input_status[terminal_id]
+            self._input_durability.pop(terminal_id, None)
 
         message = envelope.message.model_copy(deep=True)
         metadata = dict(message.metadata)
@@ -242,13 +240,10 @@ class ExecutionSession:
     def cancel_input(self, input_id: str) -> InputReceipt:
         status = self._input_status.get(input_id)
         if status == "committed":
-            durability: InputDurability = (
-                "checkpoint" if self._has_durable_checkpoint() else "memory"
-            )
             return InputReceipt(
                 input_id=input_id,
                 status="committed",
-                durability=durability,
+                durability=self._input_durability.get(input_id, "memory"),
             )
         if status == "cancelled":
             return InputReceipt(input_id=input_id, status="cancelled")
@@ -262,6 +257,11 @@ class ExecutionSession:
         self._input_status[input_id] = "cancelled"
         self._queued_inputs.pop(input_id, None)
         return InputReceipt(input_id=input_id, status="cancelled")
+
+    def _reset_inputs(self) -> None:
+        self._input_status.clear()
+        self._input_durability.clear()
+        self._queued_inputs.clear()
 
     async def execute(self, request: ExecutionRequest) -> ExecutionResult:
         """Execute one attempt and return settled lifecycle facts."""
@@ -278,9 +278,22 @@ class ExecutionSession:
         for input_id, status in tuple(self._input_status.items()):
             if status != "queued":
                 continue
-            self._agent._steering_queue.remove(input_id)
-            self._agent._follow_up_queue.remove(input_id)
+            removed = self._agent._steering_queue.remove(input_id)
+            removed = self._agent._follow_up_queue.remove(input_id) or removed
+            queued_message = self._queued_inputs.get(input_id)
+            if (
+                not removed
+                and queued_message is not None
+                and any(
+                    message is queued_message for message in self._agent.state.messages
+                )
+            ):
+                self._input_status[input_id] = "committed"
+                self._input_durability[input_id] = "memory"
+                self._queued_inputs.pop(input_id, None)
+                continue
             del self._input_status[input_id]
+            self._input_durability.pop(input_id, None)
             self._queued_inputs.pop(input_id, None)
         self._turn_contexts.clear()
         self._pending_request = None
@@ -398,6 +411,9 @@ class ExecutionSession:
                 and self._queued_inputs.get(input_id) is event.message
             ):
                 self._input_status[input_id] = "committed"
+                self._input_durability[input_id] = (
+                    "checkpoint" if self._has_durable_checkpoint() else "memory"
+                )
                 self._queued_inputs.pop(input_id, None)
                 committed_input_id = input_id
         await self._publish(event, terminal=False)
@@ -588,7 +604,11 @@ class ExecutionSession:
                 message=str(caught),
                 cause=caught,
             )
-        elif private_outcome == "complete" and not self._agent.state.error_message:
+        elif (
+            history_consistent
+            and private_outcome == "complete"
+            and not self._agent.state.error_message
+        ):
             outcome = "completed"
         elif self._cancel_requested:
             outcome = "cancelled"

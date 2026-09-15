@@ -19,6 +19,7 @@ from cubeloop.providers.base import (
     UserMessage,
 )
 from cubeloop.providers.faux import FauxProvider
+from cubeloop.session import PromptExecutionRequest
 
 
 def _asst(call_ids, run_id="R"):
@@ -147,7 +148,11 @@ async def test_incomplete_tool_cycle_does_not_mark():
         thread_id="t",
         after_model_response=_stop_after,
     )
-    await a.prompt("hi", run_id="R1")
+    result = await a.session.execute(
+        PromptExecutionRequest(run_id="R1", attempt_id="A1", message="hi")
+    )
+    assert result.outcome == "incomplete"
+    assert result.checkpoint_committed is False
     assert cp._runs["t"]["R1"].completed_at is None
 
 

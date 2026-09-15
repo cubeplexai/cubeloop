@@ -569,3 +569,75 @@ async def test_matching_caller_metadata_cannot_commit_an_unrelated_message() -> 
     assert agent.session.cancel_input("input-1").status == "cancelled"
     release.set()
     assert await task == "run-1"
+
+
+@pytest.mark.asyncio
+async def test_append_failure_keeps_drained_input_deduplicated_in_memory() -> None:
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    second_entered = asyncio.Event()
+    release_second = asyncio.Event()
+
+    class FailingInputCheckpointer(MemoryCheckpointer):
+        async def append(self, thread_id, messages):
+            if any(message.metadata.get("input_id") for message in messages):
+                raise RuntimeError("checkpoint unavailable")
+            await super().append(thread_id, messages)
+
+    async def first_response(messages, model):
+        del messages, model
+        first_entered.set()
+        await release_first.wait()
+        return AssistantMessage(
+            content=[TextContent(text="first")], stop_reason="end_turn"
+        )
+
+    async def second_attempt(messages, model):
+        del messages, model
+        second_entered.set()
+        await release_second.wait()
+        return AssistantMessage(
+            content=[TextContent(text="done")], stop_reason="end_turn"
+        )
+
+    provider = FauxProvider(provider_id="faux")
+    provider.set_responses([first_response, second_attempt])
+    agent = Agent(
+        model=provider.model("faux-model"),
+        checkpointer=FailingInputCheckpointer(),
+        thread_id="thread-1",
+    )
+    first = asyncio.create_task(
+        agent.session.execute(
+            PromptExecutionRequest(
+                run_id="run-1", attempt_id="attempt-1", message="first"
+            )
+        )
+    )
+    await asyncio.wait_for(first_entered.wait(), timeout=1)
+    envelope = InputEnvelope(
+        input_id="input-1",
+        message=UserMessage(content=[TextContent(text="once")]),
+        mode="follow_up",
+    )
+    assert agent.session.submit_input(envelope).status == "queued"
+    release_first.set()
+    first_result = await first
+    assert first_result.outcome == "failed"
+    assert first_result.error is not None
+
+    second = asyncio.create_task(agent.prompt("second", run_id="run-2"))
+    await asyncio.wait_for(second_entered.wait(), timeout=1)
+    duplicate = agent.session.submit_input(envelope)
+
+    assert duplicate.status == "committed"
+    assert duplicate.durability == "memory"
+    assert (
+        sum(
+            message.metadata.get("input_id") == "input-1"
+            for message in agent.state.messages
+        )
+        == 1
+    )
+    release_second.set()
+    assert await second == "run-2"
