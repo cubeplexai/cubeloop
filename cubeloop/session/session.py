@@ -86,7 +86,7 @@ class ExecutionSession:
         self._idle.set()
         self._seq = 0
         self._publish_lock = asyncio.Lock()
-        self._required_delivery_failure: DeliveryError | None = None
+        self._required_delivery_failure: tuple[_Consumer, DeliveryError] | None = None
         self._consumers: list[_Consumer] = []
         self._input_status: dict[str, InputStatus] = {}
         self._queued_inputs: dict[str, Message] = {}
@@ -182,6 +182,11 @@ class ExecutionSession:
                 consumer.task.cancel()
             if consumer in self._consumers:
                 self._consumers.remove(consumer)
+            if (
+                self._required_delivery_failure is not None
+                and self._required_delivery_failure[0] is consumer
+            ):
+                self._required_delivery_failure = None
 
         return unsubscribe
 
@@ -270,7 +275,6 @@ class ExecutionSession:
         self._accepting_input = True
         self._seq = 0
         self._delivery_errors = []
-        self._required_delivery_failure = None
         for input_id, status in tuple(self._input_status.items()):
             if status != "queued":
                 continue
@@ -380,7 +384,7 @@ class ExecutionSession:
     async def _publish_agent_event(self, event: SessionEvent) -> None:
         if self._active_attempt_id is None:
             return
-        if isinstance(event, AgentEndEvent):
+        if isinstance(event, (AgentEndEvent, AgentSuspendedEvent)):
             self._accepting_input = False
             self._accepting_cancel = False
         if isinstance(event, AgentSuspendedEvent):
@@ -423,7 +427,7 @@ class ExecutionSession:
         terminal: bool,
     ) -> list[DeliveryError]:
         if not terminal and self._required_delivery_failure is not None:
-            failure = self._required_delivery_failure
+            _, failure = self._required_delivery_failure
             raise _RequiredConsumerError(
                 f"required consumer {failure.consumer} failed: {failure.message}"
             )
@@ -435,7 +439,7 @@ class ExecutionSession:
             event=event,
         )
         errors: list[DeliveryError] = []
-        required_failure: DeliveryError | None = None
+        required_failure: tuple[_Consumer, DeliveryError] | None = None
         for consumer in tuple(self._consumers):
             if consumer.closed:
                 continue
@@ -456,6 +460,7 @@ class ExecutionSession:
                     timeout=consumer.delivery_timeout,
                 )
             except TimeoutError:
+                acknowledged.cancel()
                 diagnostic = DeliveryError(
                     consumer=consumer.name,
                     seq=envelope.seq,
@@ -465,7 +470,7 @@ class ExecutionSession:
                 errors.append(diagnostic)
                 self._close_consumer(consumer)
                 if consumer.required and not terminal and required_failure is None:
-                    required_failure = diagnostic
+                    required_failure = (consumer, diagnostic)
             except Exception as exc:
                 diagnostic = DeliveryError(
                     consumer=consumer.name,
@@ -476,13 +481,13 @@ class ExecutionSession:
                 errors.append(diagnostic)
                 self._close_consumer(consumer)
                 if consumer.required and not terminal and required_failure is None:
-                    required_failure = diagnostic
+                    required_failure = (consumer, diagnostic)
         self._delivery_errors.extend(errors)
         if required_failure is not None:
+            failed_consumer, diagnostic = required_failure
             self._required_delivery_failure = required_failure
             raise _RequiredConsumerError(
-                f"required consumer {required_failure.consumer} failed: "
-                f"{required_failure.message}"
+                f"required consumer {failed_consumer.name} failed: {diagnostic.message}"
             )
         return errors
 
@@ -569,7 +574,7 @@ class ExecutionSession:
 
         private_outcome = self._agent.state.last_outcome
         error: ExecutionError | None = None
-        if isinstance(caught, asyncio.CancelledError) or self._cancel_requested:
+        if isinstance(caught, asyncio.CancelledError):
             outcome: ExecutionOutcome = "cancelled"
             error = ExecutionError(
                 kind="cancelled",
@@ -583,6 +588,14 @@ class ExecutionSession:
                 message=str(caught),
                 cause=caught,
             )
+        elif private_outcome == "complete" and not self._agent.state.error_message:
+            outcome = "completed"
+        elif self._cancel_requested:
+            outcome = "cancelled"
+            error = ExecutionError(
+                kind="cancelled",
+                message="execution cancelled",
+            )
         elif private_outcome == "suspended":
             outcome = "suspended"
         elif not history_consistent or private_outcome == "incomplete":
@@ -591,8 +604,6 @@ class ExecutionSession:
                 kind="inconsistent",
                 message="execution history has incomplete tool-call results",
             )
-        elif private_outcome == "complete" and not self._agent.state.error_message:
-            outcome = "completed"
         else:
             outcome = "failed"
             message = (

@@ -227,6 +227,42 @@ async def test_agent_prompt_and_session_share_one_admission_gate() -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_prompt_checks_admission_before_hitl_binding() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_response(messages, model):
+        del messages, model
+        entered.set()
+        await release.wait()
+        return _answer()
+
+    provider = _provider()
+    provider.set_responses([slow_response])
+    checkpointer = MemoryCheckpointer()
+    channel = CheckpointedChannel(
+        checkpointer=checkpointer,
+        thread_id="thread-1",
+        run_id="run-1",
+    )
+    agent = Agent(
+        model=provider.model("faux-model"),
+        tools=[ask_user_tool(channel)],
+        channel=channel,
+        checkpointer=checkpointer,
+        thread_id="thread-1",
+    )
+    active = asyncio.create_task(agent.prompt("first", run_id="run-1"))
+    await asyncio.wait_for(entered.wait(), timeout=1)
+
+    with pytest.raises(ExecutionBusy):
+        await agent.prompt("second")
+
+    release.set()
+    assert await active == "run-1"
+
+
+@pytest.mark.asyncio
 async def test_agent_respond_checks_admission_before_loading_pending() -> None:
     entered = asyncio.Event()
     release = asyncio.Event()
@@ -565,6 +601,25 @@ async def test_cancel_requested_during_startup_reaches_new_run_signal() -> None:
     result = await task
 
     assert result.outcome == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_committed_completion_takes_precedence_over_cancel_request() -> None:
+    agent = Agent(
+        model=_provider(_answer()).model("faux-model"),
+        checkpointer=MemoryCheckpointer(),
+        thread_id="thread-1",
+    )
+    agent._state.last_outcome = "complete"
+    agent.session._cancel_requested = True
+
+    result = await agent.session._settle(
+        PromptExecutionRequest(run_id="run-1", attempt_id="attempt-1", message="hi"),
+        None,
+    )
+
+    assert result.outcome == "completed"
+    assert result.checkpoint_committed is True
 
 
 @pytest.mark.asyncio

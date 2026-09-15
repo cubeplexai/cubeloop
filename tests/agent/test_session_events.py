@@ -5,8 +5,9 @@ import asyncio
 import pytest
 
 from cubeloop import Agent
-from cubeloop.agent.types import AgentStartEvent
+from cubeloop.agent.types import AgentStartEvent, AgentSuspendedEvent
 from cubeloop.checkpointer.memory import MemoryCheckpointer
+from cubeloop.hitl.types import ConfirmRequest, HitlRequest
 from cubeloop.providers.base import UserMessage
 from cubeloop.providers.base import AssistantMessage, TextContent
 from cubeloop.providers.faux import FauxProvider
@@ -57,6 +58,87 @@ async def test_required_consumer_failure_fails_execution() -> None:
     assert result.error is not None
     assert result.error.kind == "execution"
     assert "host-publisher" in result.error.message
+
+
+@pytest.mark.asyncio
+async def test_required_consumer_failure_blocks_attempts_until_unsubscribed() -> None:
+    provider = FauxProvider(provider_id="faux")
+    calls = 0
+
+    async def response(messages, model):
+        nonlocal calls
+        del messages, model
+        calls += 1
+        return AssistantMessage(
+            content=[TextContent(text="done")], stop_reason="end_turn"
+        )
+
+    provider.set_responses([response])
+    agent = Agent(model=provider.model("faux-model"))
+
+    def broken(envelope):
+        del envelope
+        raise RuntimeError("publisher closed")
+
+    unsubscribe = agent.session.subscribe(broken, required=True, name="host-publisher")
+
+    first = await agent.session.execute(
+        PromptExecutionRequest(run_id="run-1", attempt_id="attempt-1", message="hi")
+    )
+    second = await agent.session.execute(
+        PromptExecutionRequest(run_id="run-2", attempt_id="attempt-2", message="hi")
+    )
+
+    assert first.outcome == "failed"
+    assert second.outcome == "failed"
+    assert calls == 0
+
+    unsubscribe()
+    recovered = await agent.session.execute(
+        PromptExecutionRequest(run_id="run-3", attempt_id="attempt-3", message="hi")
+    )
+    assert recovered.outcome == "completed"
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_suspension_closes_input_and_cancel_admission_before_delivery() -> None:
+    agent = _agent()
+    receipts = []
+
+    def react_to_suspension(envelope):
+        if envelope.event.type != "agent_suspended":
+            return
+        receipts.append(
+            agent.session.submit_input(
+                InputEnvelope(
+                    input_id="late",
+                    message=UserMessage(content=[TextContent(text="too late")]),
+                    mode="follow_up",
+                )
+            )
+        )
+        agent.session.request_cancel()
+
+    agent.session.subscribe(react_to_suspension)
+    agent._state.last_outcome = "suspended"
+    pending = HitlRequest(
+        question_id="question-1",
+        thread_id="thread-1",
+        payload=ConfirmRequest(prompt="continue?"),
+        created_at=0,
+    )
+    agent.session._active_run_id = "run-1"
+    agent.session._active_attempt_id = "attempt-1"
+    agent.session._accepting_input = True
+    agent.session._accepting_cancel = True
+
+    await agent.session._publish_agent_event(
+        AgentSuspendedEvent(pending_request=pending)
+    )
+
+    assert [receipt.status for receipt in receipts] == ["closed"]
+    assert agent.session._cancel_requested is False
 
 
 @pytest.mark.asyncio
