@@ -260,7 +260,7 @@ async def test_agent_respond_checks_admission_before_loading_pending() -> None:
 
     assert checkpointer.load_pending_calls == calls_before
     release.set()
-    await active
+    assert await active == "run-1"
 
 
 @pytest.mark.asyncio

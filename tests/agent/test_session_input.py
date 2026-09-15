@@ -264,7 +264,7 @@ async def test_input_admission_closes_before_final_on_run_end_hook() -> None:
 
     assert receipt.status == "closed"
     release.set()
-    await task
+    assert await task == "run-1"
 
 
 @pytest.mark.asyncio
