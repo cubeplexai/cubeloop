@@ -361,3 +361,77 @@ async def test_input_with_mismatched_run_id_is_rejected_before_queueing() -> Non
     assert receipt.status == "closed"
     release.set()
     assert await task == "run-1"
+
+
+@pytest.mark.asyncio
+async def test_input_dedup_capacity_rejects_only_when_all_entries_are_queued(
+    monkeypatch,
+) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def response(messages, model):
+        del messages, model
+        entered.set()
+        await release.wait()
+        return AssistantMessage(
+            content=[TextContent(text="done")], stop_reason="end_turn"
+        )
+
+    monkeypatch.setattr("cubeloop.session.session._INPUT_DEDUP_CAPACITY", 1)
+    provider = FauxProvider(provider_id="faux")
+    provider.set_responses([response])
+    agent = Agent(model=provider.model("faux-model"))
+    task = asyncio.create_task(agent.prompt("hi", run_id="run-1"))
+    await asyncio.wait_for(entered.wait(), timeout=1)
+
+    first = InputEnvelope(
+        input_id="first",
+        message=UserMessage(content=[TextContent(text="first")]),
+        mode="steer",
+    )
+    second = InputEnvelope(
+        input_id="second",
+        message=UserMessage(content=[TextContent(text="second")]),
+        mode="steer",
+    )
+    assert agent.session.submit_input(first).status == "queued"
+    assert agent.session.submit_input(second).status == "closed"
+    assert agent.session.cancel_input("first").status == "cancelled"
+    assert agent.session.submit_input(second).status == "queued"
+    assert agent.session.cancel_input("second").status == "cancelled"
+
+    release.set()
+    assert await task == "run-1"
+
+
+@pytest.mark.asyncio
+async def test_error_response_closes_input_before_agent_end_delivery() -> None:
+    provider = FauxProvider(provider_id="faux")
+    provider.set_responses(
+        [AssistantMessage(content=[TextContent(text="failed")], stop_reason="error")]
+    )
+    agent = Agent(model=provider.model("faux-model"))
+    receipts = []
+
+    def listener(envelope):
+        if envelope.event.type == "agent_end":
+            receipts.append(
+                agent.session.submit_input(
+                    InputEnvelope(
+                        input_id="after-error",
+                        message=UserMessage(content=[TextContent(text="late")]),
+                        mode="follow_up",
+                    )
+                )
+            )
+
+    agent.session.subscribe(listener)
+
+    result = await agent.session.execute(
+        PromptExecutionRequest(run_id="run-1", attempt_id="attempt-1", message="hi")
+    )
+
+    assert result.outcome == "failed"
+    assert len(receipts) == 1
+    assert receipts[0].status == "closed"
