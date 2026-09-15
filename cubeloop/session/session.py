@@ -80,6 +80,7 @@ class ExecutionSession:
         self._active_attempt_id: str | None = None
         self._active_run_id: str | None = None
         self._cancel_requested = False
+        self._accepting_cancel = False
         self._accepting_input = False
         self._idle = asyncio.Event()
         self._idle.set()
@@ -138,6 +139,8 @@ class ExecutionSession:
             return data
 
     def request_cancel(self) -> None:
+        if not self._accepting_cancel:
+            return
         self._cancel_requested = True
         self._agent.abort()
 
@@ -263,6 +266,7 @@ class ExecutionSession:
         self._active_attempt_id = request.attempt_id
         self._active_run_id = request.run_id
         self._cancel_requested = False
+        self._accepting_cancel = True
         self._accepting_input = True
         self._seq = 0
         self._delivery_errors = []
@@ -301,6 +305,7 @@ class ExecutionSession:
             raise
         finally:
             self._accepting_input = False
+            self._accepting_cancel = False
 
         try:
             try:
@@ -377,6 +382,7 @@ class ExecutionSession:
             return
         if isinstance(event, AgentEndEvent):
             self._accepting_input = False
+            self._accepting_cancel = False
         if isinstance(event, AgentSuspendedEvent):
             self._pending_request = event.pending_request.model_copy(deep=True)
         committed_input_id: str | None = None
@@ -489,11 +495,13 @@ class ExecutionSession:
             event = event.model_copy(deep=True)
         elif isinstance(event, ExecutionFinished):
             pending = event.result.pending_request
+            error = event.result.error
             result = replace(
                 event.result,
                 pending_request=(
                     pending.model_copy(deep=True) if pending is not None else None
                 ),
+                error=replace(error, cause=None) if error is not None else None,
             )
             event = ExecutionFinished(result=result)
         return replace(envelope, event=event)
@@ -553,7 +561,7 @@ class ExecutionSession:
             load_pending = getattr(self._agent.checkpointer, "load_pending", None)
             if load_pending is not None:
                 loaded = await load_pending(self._agent.thread_id)
-                if loaded is not None:
+                if loaded is not None and loaded[1] == request.run_id:
                     pending = loaded[0].model_copy(deep=True)
                     pending_is_durable = True
         if pending is None:
@@ -599,7 +607,7 @@ class ExecutionSession:
             run_id=request.run_id,
             attempt_id=request.attempt_id,
             outcome=outcome,
-            pending_request=pending,
+            pending_request=pending if outcome == "suspended" else None,
             error=error,
             checkpoint_committed=checkpoint_committed,
             history_consistent=history_consistent,
