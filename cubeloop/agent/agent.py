@@ -486,6 +486,7 @@ class Agent(Generic[TMessage]):
     ) -> str:
         from cubeloop.session import PromptExecutionRequest
 
+        self.session._assert_idle()
         self._validate_hitl_bindings(run_id, caller="prompt")
         effective_run_id = run_id or uuid.uuid4().hex
         result = await self.session.execute(
