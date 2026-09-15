@@ -533,3 +533,24 @@ async def test_cancel_requested_during_startup_reaches_new_run_signal() -> None:
     result = await task
 
     assert result.outcome == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_process_control_exception_releases_session_ownership() -> None:
+    class ProcessExit(BaseException):
+        pass
+
+    async def raises_process_exit(context, signal=None):
+        del context, signal
+        raise ProcessExit("stop host")
+
+    provider = _provider(_answer())
+    agent = Agent(model=provider.model("faux-model"), on_run_end=raises_process_exit)
+
+    with pytest.raises(ProcessExit, match="stop host"):
+        await agent.session.execute(
+            PromptExecutionRequest(run_id="run-1", attempt_id="attempt-1", message="hi")
+        )
+
+    assert agent.session.active_attempt_id is None
+    await asyncio.wait_for(agent.wait_for_idle(), timeout=1)

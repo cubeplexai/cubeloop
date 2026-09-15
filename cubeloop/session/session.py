@@ -296,6 +296,9 @@ class ExecutionSession:
             caught = exc
         except Exception as exc:
             caught = exc
+        except BaseException:
+            self._release_attempt()
+            raise
         finally:
             self._accepting_input = False
 
@@ -336,9 +339,12 @@ class ExecutionSession:
                 )
             return result
         finally:
-            self._active_attempt_id = None
-            self._active_run_id = None
-            self._idle.set()
+            self._release_attempt()
+
+    def _release_attempt(self) -> None:
+        self._active_attempt_id = None
+        self._active_run_id = None
+        self._idle.set()
 
     def _assert_idle(self) -> None:
         if self._active_attempt_id is not None or self._agent._run_lock.locked():
