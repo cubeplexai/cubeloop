@@ -1361,7 +1361,11 @@ class Agent(Generic[TMessage]):
             self._state.streaming_message = None
             self._state._messages.append(msg)
             if self.checkpointer and self.thread_id:
-                await self.checkpointer.append(self.thread_id, [msg])
+                try:
+                    await self.checkpointer.append(self.thread_id, [msg])
+                except BaseException:
+                    self.session._mark_checkpoint_write_failure()
+                    raise
         elif event.type == "tool_execution_start":
             self._state._pending_tool_calls = self._state._pending_tool_calls | {
                 event.tool_call_id
