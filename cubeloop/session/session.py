@@ -96,6 +96,7 @@ class ExecutionSession:
         self._checkpoint_write_failed = False
         self._turn_contexts: list[TurnExecutionContext] = []
         self._resume_turn_context: TurnExecutionContext | None = None
+        self._suspended_turn_context: TurnExecutionContext | None = None
         self._pending_request: HitlRequest | None = None
 
     @property
@@ -318,13 +319,18 @@ class ExecutionSession:
             self._queued_inputs.pop(input_id, None)
         self._resume_turn_context = None
         if isinstance(request, RespondExecutionRequest):
-            self._resume_turn_context = next(
-                (
-                    context
-                    for context in reversed(self._turn_contexts)
-                    if context.run_id == request.run_id
-                ),
-                None,
+            retained = self._suspended_turn_context
+            self._resume_turn_context = (
+                retained
+                if retained is not None and retained.run_id == request.run_id
+                else next(
+                    (
+                        context
+                        for context in reversed(self._turn_contexts)
+                        if context.run_id == request.run_id
+                    ),
+                    None,
+                )
             )
         self._turn_contexts.clear()
         if self._resume_turn_context is not None:
@@ -412,6 +418,12 @@ class ExecutionSession:
                     result,
                     delivery_errors=tuple([*result.delivery_errors, *final_errors]),
                 )
+            if (
+                result.outcome == "completed"
+                and self._suspended_turn_context is not None
+                and self._suspended_turn_context.run_id == request.run_id
+            ):
+                self._suspended_turn_context = None
             return result
         finally:
             self._release_attempt()
@@ -456,6 +468,14 @@ class ExecutionSession:
             self._accepting_cancel = False
         if isinstance(event, AgentSuspendedEvent):
             self._pending_request = event.pending_request.model_copy(deep=True)
+            self._suspended_turn_context = next(
+                (
+                    context
+                    for context in reversed(self._turn_contexts)
+                    if context.run_id == self._active_run_id
+                ),
+                None,
+            )
         committed_input_id: str | None = None
         if isinstance(event, MessageEndEvent):
             input_id = event.message.metadata.get("input_id")
@@ -631,18 +651,6 @@ class ExecutionSession:
             tool_cycle_consistent = False
         history_consistent = tool_cycle_consistent and not self._checkpoint_write_failed
 
-        pending = None
-        pending_is_durable = False
-        if self._agent.checkpointer is not None and self._agent.thread_id is not None:
-            load_pending = getattr(self._agent.checkpointer, "load_pending", None)
-            if load_pending is not None:
-                loaded = await load_pending(self._agent.thread_id)
-                if loaded is not None and loaded[1] == request.run_id:
-                    pending = loaded[0].model_copy(deep=True)
-                    pending_is_durable = True
-        if pending is None:
-            pending = self._pending_request
-
         private_outcome = self._agent.state.last_outcome
         error: ExecutionError | None = None
         if isinstance(caught, asyncio.CancelledError):
@@ -685,6 +693,22 @@ class ExecutionSession:
                 self._agent.state.error_message or "execution ended without a cause"
             )
             error = ExecutionError(kind="execution", message=message)
+
+        pending = None
+        pending_is_durable = False
+        if outcome == "suspended":
+            if (
+                self._agent.checkpointer is not None
+                and self._agent.thread_id is not None
+            ):
+                load_pending = getattr(self._agent.checkpointer, "load_pending", None)
+                if load_pending is not None:
+                    loaded = await load_pending(self._agent.thread_id)
+                    if loaded is not None and loaded[1] == request.run_id:
+                        pending = loaded[0].model_copy(deep=True)
+                        pending_is_durable = True
+            if pending is None:
+                pending = self._pending_request
 
         checkpoint_committed = self._has_durable_checkpoint() and (
             (outcome == "completed" and self._agent._run_aware)

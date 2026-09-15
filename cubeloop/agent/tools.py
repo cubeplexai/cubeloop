@@ -191,7 +191,7 @@ async def _resolve_tool_call(
             if context.on_turn_context is not None:
                 callback_result = context.on_turn_context(extended)
                 if inspect.isawaitable(callback_result):
-                    await callback_result
+                    _ = await callback_result
     return rewritten, True, None
 
 

@@ -227,6 +227,13 @@ async def test_terminal_event_sanitizes_error_cause_for_consumers() -> None:
         checkpointer=BrokenPendingCheckpointer(),
         thread_id="thread-1",
     )
+
+    async def suspend(message, *, run_id=None):
+        del message, run_id
+        agent._state.last_outcome = "suspended"
+        return "run-1"
+
+    agent._execute_prompt = suspend  # type: ignore[method-assign]
     observed_causes = []
 
     def listener(envelope):

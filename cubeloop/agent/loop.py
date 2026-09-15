@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import uuid
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable, cast
 
 from cubeloop.agent.tools import execute_tool_calls
 from cubeloop.agent.types import (
@@ -821,12 +822,12 @@ async def _stream_assistant_response(
             context.turn_execution_context = captured
             if context.on_turn_context is not None:
                 callback_result = context.on_turn_context(captured)
-                if asyncio.iscoroutine(callback_result):
-                    await callback_result
+                if inspect.isawaitable(callback_result):
+                    _ = await callback_result
         if previous_on_model_attempt is not None:
             callback_result = previous_on_model_attempt(model_spec)
-            if asyncio.iscoroutine(callback_result):
-                await callback_result
+            if inspect.isawaitable(callback_result):
+                _ = await cast(Awaitable[object], callback_result)
 
     options = options.model_copy(update={"on_model_attempt": _capture_model_attempt})
 

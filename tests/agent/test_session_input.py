@@ -470,7 +470,7 @@ async def test_cancelled_attempt_discards_its_undrained_input_queue() -> None:
     assert agent.session.submit_input(envelope).status == "queued"
     first.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await first
+        _ = await first
 
     second = asyncio.create_task(agent.prompt("second", run_id="run-2"))
     await asyncio.wait_for(second_entered.wait(), timeout=1)
