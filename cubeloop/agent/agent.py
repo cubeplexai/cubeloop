@@ -887,6 +887,7 @@ class Agent(Generic[TMessage]):
             run_id=self._state.active_run_id,
             attempt_id=self.session.active_attempt_id,
             on_turn_context=self.session._capture_turn_context,
+            set_input_admission=self.session._set_input_admission,
         )
 
     async def detach(self) -> None:
@@ -921,6 +922,7 @@ class Agent(Generic[TMessage]):
     ) -> None:
         from cubeloop.session import RespondExecutionRequest
 
+        self.session._assert_idle()
         recovered_run_id: str | None = None
         if self.checkpointer is not None and self.thread_id is not None:
             load_pending = getattr(self.checkpointer, "load_pending", None)

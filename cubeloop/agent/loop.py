@@ -67,6 +67,7 @@ async def run_agent_loop(
         run_id=context.run_id,
         attempt_id=context.attempt_id,
         on_turn_context=context.on_turn_context,
+        set_input_admission=context.set_input_admission,
     )
 
     await emit_event(emit, AgentStartEvent())
@@ -133,6 +134,7 @@ async def run_agent_loop_continue(
         run_id=context.run_id,
         attempt_id=context.attempt_id,
         on_turn_context=context.on_turn_context,
+        set_input_admission=context.set_input_admission,
     )
 
     await emit_event(emit, AgentStartEvent())
@@ -379,6 +381,8 @@ async def _run_agent_loop_resume_body(  # pragma: no cover — E2E tested
             new_messages=new_messages,
         )
         if await should_stop_after_turn(stop_ctx):
+            if current_context.set_input_admission is not None:
+                current_context.set_input_admission(False)
             await emit_event(emit, AgentEndEvent(messages=new_messages))
             if set_outcome is not None:
                 set_outcome("complete")
@@ -386,6 +390,8 @@ async def _run_agent_loop_resume_body(  # pragma: no cover — E2E tested
 
     # Terminate-by-tool semantics (codex BLOCKING: previous draft ignored).
     if terminated_by_tool:
+        if current_context.set_input_admission is not None:
+            current_context.set_input_admission(False)
         await emit_event(emit, AgentEndEvent(messages=new_messages))
         if set_outcome is not None:
             set_outcome("complete")
@@ -542,6 +548,8 @@ async def _run_loop_inner(
                 # Emit message_end before turn/agent end events.
                 await emit_event(emit, MessageEndEvent(message=message))
                 await emit_event(emit, TurnEndEvent(message=message, tool_results=[]))
+                if current_context.set_input_admission is not None:
+                    current_context.set_input_admission(False)
                 await emit_event(emit, AgentEndEvent(messages=new_messages))
                 if set_outcome is not None:
                     set_outcome("abandoned")
@@ -705,11 +713,15 @@ async def _run_loop_inner(
                 continue
 
         if on_run_end:
+            if current_context.set_input_admission is not None:
+                current_context.set_input_admission(False)
             inject = await on_run_end(current_context, signal=opts.signal)
             if inject:
                 on_run_end_cycles += 1
                 if on_run_end_cycles > _MAX_ON_RUN_END_CYCLES:
                     break
+                if current_context.set_input_admission is not None:
+                    current_context.set_input_admission(True)
                 for msg in inject:
                     await emit_event(emit, MessageStartEvent(message=msg))
                     await emit_event(emit, MessageEndEvent(message=msg))
@@ -718,8 +730,14 @@ async def _run_loop_inner(
                 first_turn = False
                 continue
 
+        else:
+            if current_context.set_input_admission is not None:
+                current_context.set_input_admission(False)
+
         break
 
+    if current_context.set_input_admission is not None:
+        current_context.set_input_admission(False)
     await emit_event(emit, AgentEndEvent(messages=new_messages))
     if set_outcome is not None:
         set_outcome("complete")

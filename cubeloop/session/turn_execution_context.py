@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
+from collections.abc import Awaitable, Callable
 from typing import Any, Mapping
 
-from cubeloop.agent.types import AgentTool
+from pydantic import BaseModel
+
+from cubeloop.agent.types import AgentTool, AgentToolResult
 from cubeloop.providers.base import Message, Model, ReasoningControl
 
 
@@ -64,7 +67,21 @@ class MessageView:
 class ToolExecutionBinding:
     name: str
     definition: FrozenObject
-    tool: AgentTool
+    parameters: type[BaseModel]
+    execute: Callable[..., Awaitable[AgentToolResult]]
+    hitl_builtin: bool
+    _source_id: int = field(repr=False)
+
+    @classmethod
+    def capture(cls, tool: AgentTool) -> ToolExecutionBinding:
+        return cls(
+            name=tool.name,
+            definition=_freeze(tool.to_definition()),
+            parameters=tool.parameters,
+            execute=tool.execute,
+            hitl_builtin=tool.hitl_builtin,
+            _source_id=id(tool),
+        )
 
 
 @dataclass(frozen=True)
@@ -101,14 +118,7 @@ class TurnExecutionContext:
             reasoning=_freeze(reasoning),
             system_prompt=system_prompt,
             messages=tuple(MessageView.capture(message) for message in messages),
-            tools=tuple(
-                ToolExecutionBinding(
-                    name=tool.name,
-                    definition=_freeze(tool.to_definition()),
-                    tool=tool,
-                )
-                for tool in tools or []
-            ),
+            tools=tuple(ToolExecutionBinding.capture(tool) for tool in tools or []),
             policy_revision=policy_revision,
         )
 
@@ -118,14 +128,10 @@ class TurnExecutionContext:
     def extend(self, tool: AgentTool) -> TurnExecutionContext:
         existing = self.binding_for(tool.name)
         if existing is not None:
-            if existing.tool is not tool:
+            if existing._source_id != id(tool):
                 raise ValueError(
                     f"turn execution context already binds tool {tool.name!r}"
                 )
             return self
-        binding = ToolExecutionBinding(
-            name=tool.name,
-            definition=_freeze(tool.to_definition()),
-            tool=tool,
-        )
+        binding = ToolExecutionBinding.capture(tool)
         return replace(self, tools=(*self.tools, binding))

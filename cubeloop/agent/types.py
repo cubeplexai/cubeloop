@@ -64,6 +64,7 @@ class AgentContext:
     turn_id: str | None = None
     turn_execution_context: Any = None
     on_turn_context: Callable[[Any], Any] | None = None
+    set_input_admission: Callable[[bool], None] | None = None
 
 
 # --- Hook context types ---

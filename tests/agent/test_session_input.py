@@ -234,3 +234,130 @@ async def test_session_input_id_overrides_caller_steering_key() -> None:
         message.metadata.get("input_id") == "owned-id"
         for message in agent.state.messages
     )
+
+
+@pytest.mark.asyncio
+async def test_input_admission_closes_before_final_on_run_end_hook() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def on_run_end(context, signal=None):
+        del context, signal
+        entered.set()
+        await release.wait()
+
+    provider = FauxProvider(provider_id="faux")
+    provider.set_responses(
+        [AssistantMessage(content=[TextContent(text="done")], stop_reason="end_turn")]
+    )
+    agent = Agent(model=provider.model("faux-model"), on_run_end=on_run_end)
+    task = asyncio.create_task(agent.prompt("hi", run_id="run-1"))
+    await asyncio.wait_for(entered.wait(), timeout=1)
+
+    receipt = agent.session.submit_input(
+        InputEnvelope(
+            input_id="too-late",
+            message=UserMessage(content=[TextContent(text="late")]),
+            mode="follow_up",
+        )
+    )
+
+    assert receipt.status == "closed"
+    release.set()
+    await task
+
+
+@pytest.mark.asyncio
+async def test_committed_input_id_remains_deduplicated_across_attempts() -> None:
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    second_entered = asyncio.Event()
+    release_second = asyncio.Event()
+
+    async def first_response(messages, model):
+        del messages, model
+        first_entered.set()
+        await release_first.wait()
+        return AssistantMessage(
+            content=[TextContent(text="first")], stop_reason="end_turn"
+        )
+
+    async def second_attempt(messages, model):
+        del messages, model
+        second_entered.set()
+        await release_second.wait()
+        return AssistantMessage(
+            content=[TextContent(text="second")], stop_reason="end_turn"
+        )
+
+    provider = FauxProvider(provider_id="faux")
+    provider.set_responses(
+        [
+            first_response,
+            AssistantMessage(
+                content=[TextContent(text="after input")], stop_reason="end_turn"
+            ),
+            second_attempt,
+        ]
+    )
+    agent = Agent(model=provider.model("faux-model"))
+    first = asyncio.create_task(agent.prompt("first", run_id="run-1"))
+    await asyncio.wait_for(first_entered.wait(), timeout=1)
+    envelope = InputEnvelope(
+        input_id="stable-id",
+        message=UserMessage(content=[TextContent(text="once")]),
+        mode="follow_up",
+    )
+    assert agent.session.submit_input(envelope).status == "queued"
+    release_first.set()
+    await first
+
+    second = asyncio.create_task(agent.prompt("second", run_id="run-2"))
+    await asyncio.wait_for(second_entered.wait(), timeout=1)
+    duplicate = agent.session.submit_input(envelope)
+
+    assert duplicate.status == "committed"
+    assert duplicate.durability == "memory"
+    release_second.set()
+    await second
+    assert (
+        sum(
+            message.metadata.get("input_id") == "stable-id"
+            for message in agent.state.messages
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_input_with_mismatched_run_id_is_rejected_before_queueing() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def response(messages, model):
+        del messages, model
+        entered.set()
+        await release.wait()
+        return AssistantMessage(
+            content=[TextContent(text="done")], stop_reason="end_turn"
+        )
+
+    provider = FauxProvider(provider_id="faux")
+    provider.set_responses([response])
+    agent = Agent(model=provider.model("faux-model"))
+    task = asyncio.create_task(agent.prompt("hi", run_id="run-1"))
+    await asyncio.wait_for(entered.wait(), timeout=1)
+
+    receipt = agent.session.submit_input(
+        InputEnvelope(
+            input_id="wrong-run",
+            message=UserMessage(
+                content=[TextContent(text="wrong")], run_id="run-other"
+            ),
+            mode="steer",
+        )
+    )
+
+    assert receipt.status == "closed"
+    release.set()
+    await task
