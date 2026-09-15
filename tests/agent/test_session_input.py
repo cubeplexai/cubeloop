@@ -360,4 +360,4 @@ async def test_input_with_mismatched_run_id_is_rejected_before_queueing() -> Non
 
     assert receipt.status == "closed"
     release.set()
-    await task
+    assert await task == "run-1"
