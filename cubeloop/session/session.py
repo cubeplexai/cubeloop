@@ -141,6 +141,7 @@ class ExecutionSession:
             self._agent._extra.update(extra)
             self._agent._checkpoint_loaded = True
             self._drop_memory_input_receipts()
+            self._checkpoint_write_failed = False
             return data
 
     def request_cancel(self) -> None:
@@ -306,7 +307,6 @@ class ExecutionSession:
         self._accepting_input = True
         self._seq = 0
         self._delivery_errors = []
-        self._checkpoint_write_failed = False
         self._reconcile_consumed_inputs()
         for input_id, status in tuple(self._input_status.items()):
             if status != "queued":
@@ -687,7 +687,8 @@ class ExecutionSession:
             error = ExecutionError(kind="execution", message=message)
 
         checkpoint_committed = self._has_durable_checkpoint() and (
-            outcome == "completed" or (outcome == "suspended" and pending_is_durable)
+            (outcome == "completed" and self._agent._run_aware)
+            or (outcome == "suspended" and pending_is_durable)
         )
         return ExecutionResult(
             run_id=request.run_id,

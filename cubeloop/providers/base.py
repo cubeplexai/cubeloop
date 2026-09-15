@@ -914,6 +914,10 @@ class BoundModel:
         reasoning: ReasoningControl | None = None,
     ) -> AssistantMessage:
         # Same positional-forwarding rationale as ``stream`` above.
+        if options is not None and options.on_model_attempt is not None:
+            result = options.on_model_attempt(self.spec)
+            if inspect.isawaitable(result):
+                await result
         return await self.provider.generate(
             self.spec,
             messages,

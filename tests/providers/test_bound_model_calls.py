@@ -84,6 +84,23 @@ async def test_bound_model_generate_forwards_to_provider() -> None:
 
 
 @pytest.mark.asyncio
+async def test_bound_model_generate_invokes_model_attempt_callback() -> None:
+    provider = _RecordingProvider()
+    bound = provider.model("model-x")
+    attempts: list[Model] = []
+
+    async def capture(model: Model) -> None:
+        attempts.append(model)
+
+    await bound.generate(
+        messages=[UserMessage(content=[TextContent(text="hi")])],
+        options=StreamOptions(on_model_attempt=capture),
+    )
+
+    assert attempts == [bound.spec]
+
+
+@pytest.mark.asyncio
 async def test_bound_model_stream_forwards_to_provider() -> None:
     provider = FauxProvider(provider_id="faux")
     provider.set_responses([faux_assistant_message("hello")])

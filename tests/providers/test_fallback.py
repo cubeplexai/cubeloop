@@ -648,6 +648,34 @@ async def test_same_model_retry_recovers_without_secondary() -> None:
 
 
 @pytest.mark.asyncio
+async def test_generate_reports_every_retry_and_fallback_model_attempt() -> None:
+    error = ProviderUnavailable("blip", provider="primary", model="m")
+    primary_provider = _CountingRaiseProvider(
+        error, fail_times=99, provider_id="primary"
+    )
+    primary = BoundModel(
+        provider=primary_provider,
+        spec=Model(id="m", provider_id="primary"),
+    )
+    fallback = _faux("fallback", "ok")
+    attempts: list[str] = []
+    model = FallbackBoundModel(
+        chain=(primary, fallback),
+        max_retries_per_model=1,
+        retry_backoff=0.0,
+    )
+
+    await model.generate(
+        _messages(),
+        options=StreamOptions(
+            on_model_attempt=lambda spec: attempts.append(spec.provider_id)
+        ),
+    )
+
+    assert attempts == ["primary", "primary", "fallback"]
+
+
+@pytest.mark.asyncio
 async def test_retries_then_failover() -> None:
     err = RateLimited("429", provider="primary", model="m")
     primary_p = _CountingRaiseProvider(err, fail_times=99, provider_id="primary")
