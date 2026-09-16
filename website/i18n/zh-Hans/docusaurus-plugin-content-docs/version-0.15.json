@@ -1,0 +1,50 @@
+{
+  "version.label": {
+    "message": "0.15（最新）",
+    "description": "The label for version 0.15"
+  },
+  "sidebar.docs.category.Getting Started": {
+    "message": "快速入门",
+    "description": "The label for category 'Getting Started' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Guides": {
+    "message": "指南",
+    "description": "The label for category 'Guides' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Agents": {
+    "message": "Agent",
+    "description": "The label for category 'Agents' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Providers": {
+    "message": "Provider",
+    "description": "The label for category 'Providers' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Checkpointing": {
+    "message": "检查点",
+    "description": "The label for category 'Checkpointing' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Middlewares": {
+    "message": "中间件",
+    "description": "The label for category 'Middlewares' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Human-in-the-Loop": {
+    "message": "人机协同",
+    "description": "The label for category 'Human-in-the-Loop' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.MCP": {
+    "message": "MCP",
+    "description": "The label for category 'MCP' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Tracing": {
+    "message": "Tracing",
+    "description": "The label for category 'Tracing' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Recipes": {
+    "message": "示例",
+    "description": "The label for category 'Recipes' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Migration": {
+    "message": "迁移指南",
+    "description": "The label for category 'Migration' in sidebar 'docs'"
+  }
+}

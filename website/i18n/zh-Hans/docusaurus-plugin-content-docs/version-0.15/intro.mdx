@@ -1,0 +1,77 @@
+---
+id: intro
+title: CubeLoop
+description: "一个 Pythonic、原生异步的 Agent 框架。普通的 async 函数、追加式 checkpointing、三个依赖。"
+slug: /
+sidebar_position: 0
+---
+
+import PackageVersion from '@site/src/components/PackageVersion';
+
+# CubeLoop
+
+**CubeLoop** 是一个 Pythonic、原生异步的 Agent 框架，为高性能、可读性和
+生产级持久化而设计。它把一次 Agent 运行建模为一个线性的 `while`
+循环——可追踪、可调试，没有 DAG、没有图 DSL、没有出人意料的控制流。
+整个核心循环你五分钟就能读完。
+
+[CubePlex](https://github.com/cubeplexai/cubeplex) 基于 CubeLoop 构建，是面向团队工作区的云原生托管 Agent 平台——技能、共享记忆、MCP 工具、持久化沙箱、权限治理，并可在 Docker Compose 或 Kubernetes 上自托管。
+
+```bash
+pip install cubeloop
+```
+
+然后跳到 [快速开始](./getting-started/quick-start.md)，五分钟内跑通一个
+能调用工具的 Agent。
+
+## 你能拿到什么
+
+- **普通 async 函数，不是图节点。** Agent 循环就是一个对消息轮次的
+  `while` 循环。你把工具写成 `async def` 函数，框架负责路由调用并并行
+  执行。
+- **统一的流式模式。** 所有 provider 都通过 `MessageStream` 产出
+  `StreamEvent`。你用 `async for` 迭代它。没有 callback 注册表，也没有
+  为文本和工具单独的 handler 类型。
+- **追加式检查点。** 每一轮只写入新消息，而不是整段对话历史。无论
+  会话多长，数据库 I/O 都是 O(1)——SQLite 适合个人开发,Postgres 适合
+  生产环境。
+- **原生多 provider。** Anthropic 和 OpenAI 开箱即用,通过 `Provider`
+  Protocol 接入。要新增一个 provider 只需要写一个类。
+- **九个 Hook 的中间件。** `transform_context`、`convert_to_llm`、
+  `transform_system_prompt`、`resolve_tool_call`、`before_tool_call`、
+  `after_tool_call`、`should_stop_after_turn`、`after_model_response`、
+  `on_run_end`——每一个都有明确的组合规则。没有"节点执行顺序之谜"。
+- **MCP 加载器。** 指向任意
+  [Model Context Protocol](https://modelcontextprotocol.io) 服务器
+  （HTTP 或 stdio),就能拿回一组 `AgentTool`。
+- **原生 OpenTelemetry。** 挂一个 `Tracer`,每次 prompt 就产生符合
+  GenAI 语义约定的 OTel span 树 —— Jaeger、Tempo、Honeycomb、
+  Datadog 等任意 OTLP 后端都能直接接收。默认不记录任何 payload；
+  需要时用 `record_content=True` 配合 `redact` 回调显式开启。
+- **人机协同（HITL）。** 在 run 中途挂起 Agent，把决策路由给人工
+  （审批 / 拒绝 / 回答），然后继续执行 —— 支持检查点持久化，
+  等待期间进程可以重启。
+
+## 接下来去哪儿
+
+| 如果你想… | 从这里开始 |
+|---|---|
+| 安装并跑通第一个 Agent | [入门 → 安装](./getting-started/installation.md) |
+| 理解骨架 | [入门 → 核心概念](./getting-started/core-concepts.md) |
+| 接入一个真实的工具 Agent | [指南 → 构建第一个 Agent](./guides/agents/first-agent.md) |
+| 跨重启保留对话 | [指南 → SQLite 检查点](./guides/checkpointing/sqlite.md) |
+| 查找某个具体符号 | [API 参考](pathname:///zh-Hans/docs/next/api) |
+| 看完整的可运行示例 | [Recipes](./recipes/weather-agent.md) |
+| 从 langgraph Agent 迁移 | [迁移 → 来自 langgraph](./migration/from-langgraph.md) |
+
+## 状态
+
+你正在浏览 **CubeLoop 0.15** 发布文档。这是安装 CubeLoop 和使用 0.15
+发布 API 的最新稳定文档集。
+
+CubeLoop 0.15 增加 Execution Session，供宿主获取明确的执行结果、识别运行中
+输入，并跟踪检查点提交后的事件交付。详见[核心概念](./getting-started/core-concepts.md)
+和 [API 参考](./api/index.mdx)。
+
+源代码、Issue 和讨论都在
+[GitHub](https://github.com/cubeplexai/cubeloop)。

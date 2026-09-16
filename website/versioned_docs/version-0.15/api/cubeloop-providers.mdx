@@ -1,0 +1,1239 @@
+---
+id: cubeloop-providers
+title: cubeloop.providers
+sidebar_position: 3
+hide_table_of_contents: false
+---
+
+# `cubeloop.providers`
+
+### AssistantMessage {#assistantmessage}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L104)
+
+
+**Attributes**
+
+- `role`: `Literal['assistant']`
+- `content`: `list[Content | ThinkingContent | ToolCall]`
+- `stop_reason`: `str`
+- `error_message`: `str | None`
+- `error_type`: `str | None`
+- `error_code`: `str | None`
+- `status_code`: `int | None`
+- `retry_after`: `float | None`
+- `tokens_in`: `int | None`
+- `context_window`: `int | None`
+- `usage`: `Usage | None`
+- `timestamp`: `float | None`
+- `provider_id`: `str`
+- `model_id`: `str`
+- `response_id`: `str | None`
+- `metadata`: `JsonObject`
+- `run_id`: `str | None`
+
+
+### BaseProvider {#baseprovider}
+
+_class_
+
+```python
+BaseProvider(*, provider_id: str = '')
+```
+
+Concrete base class for built-in cubepi providers.
+
+Built-in providers (Anthropic, OpenAI, OpenAI Responses, Faux) inherit
+from this class to gain the persistent listener registry used by
+`cubeloop.tracing` and other observers. User-defined providers should
+inherit from `BaseProvider` unless they implement the full `Provider`
+protocol themselves.
+
+Concrete subclasses must implement `stream()` and call
+`_fire_listeners` at three points: after the request payload is
+finalized, for each `StreamEvent` pushed onto the stream, and exactly
+once in a `finally` block after the stream terminates.
+
+Per-call mutators (`StreamOptions.on_payload`,
+`StreamOptions.on_response`) retain their existing single-slot
+semantics and fire independently of the persistent listener registry
+below.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L709)
+
+
+**Attributes**
+
+- `provider_id`
+
+
+**Methods**
+
+#### `model` {#baseprovider-model}
+
+```python
+model(
+    id: str,
+    *,
+    api: str = '',
+    reasoning: bool = False,
+    context_window: int = 200000,
+    max_tokens: int = 8192,
+    temperature: float = 0.7,
+    cost: ModelCost | None = None,
+) -> BoundModel
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L735)
+
+
+#### `stream` {#baseprovider-stream}
+
+```python
+stream(
+    model: Model,
+    messages: list[Message],
+    *,
+    system_prompt: str = '',
+    tools: list[ToolDefinition] | None = None,
+    tool_choice: ToolChoice | None = None,
+    options: StreamOptions | None = None,
+) -> MessageStream
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L760)
+
+
+#### `generate` {#baseprovider-generate}
+
+```python
+generate(
+    model: Model,
+    messages: list[Message],
+    *,
+    system_prompt: str = '',
+    tools: list[ToolDefinition] | None = None,
+    tool_choice: ToolChoice | None = None,
+    options: StreamOptions | None = None,
+    max_output_tokens: int | None = None,
+    temperature: float | None = None,
+    reasoning: ReasoningControl | None = None,
+) -> AssistantMessage
+```
+
+Run a single provider call and return the final assistant message.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L772)
+
+
+#### `subscribe_request` {#baseprovider-subscribe-request}
+
+```python
+subscribe_request(cb: OnRequestCallback) -> Callable[[], None]
+```
+
+Register a persistent observer for request payloads.
+
+Returns a detach callable that removes this specific subscription.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L822)
+
+
+#### `subscribe_chunk` {#baseprovider-subscribe-chunk}
+
+```python
+subscribe_chunk(cb: OnChunkCallback) -> Callable[[], None]
+```
+
+Register a persistent observer for stream chunks.
+
+Returns a detach callable.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L830)
+
+
+#### `subscribe_response` {#baseprovider-subscribe-response}
+
+```python
+subscribe_response(cb: OnResponseBodyCallback) -> Callable[[], None]
+```
+
+Register a persistent observer for assembled responses.
+
+Returns a detach callable.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L838)
+
+
+
+### BoundModel {#boundmodel}
+
+_class_
+
+```python
+BoundModel(provider: Provider, spec: Model)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L872)
+
+
+**Attributes**
+
+- `provider`: `Provider`
+- `spec`: `Model`
+
+
+**Methods**
+
+#### `stream` {#boundmodel-stream}
+
+```python
+stream(
+    messages: list[Message],
+    *,
+    system_prompt: str = '',
+    tools: list[ToolDefinition] | None = None,
+    tool_choice: ToolChoice | None = None,
+    options: StreamOptions | None = None,
+) -> MessageStream
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L877)
+
+
+#### `generate` {#boundmodel-generate}
+
+```python
+generate(
+    messages: list[Message],
+    *,
+    system_prompt: str = '',
+    tools: list[ToolDefinition] | None = None,
+    tool_choice: ToolChoice | None = None,
+    options: StreamOptions | None = None,
+    max_output_tokens: int | None = None,
+    temperature: float | None = None,
+    reasoning: ReasoningControl | None = None,
+) -> AssistantMessage
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L905)
+
+
+#### `generate_structured` {#boundmodel-generate-structured}
+
+```python
+generate_structured(
+    output_type: type[BaseModelT],
+    messages: list[Message],
+    *,
+    system_prompt: str = '',
+    tool_name: str = 'structured_output',
+    tool_description: str = 'Return the structured output',
+    max_output_tokens: int | None = None,
+    temperature: float | None = None,
+    max_retries: int = 1,
+) -> BaseModelT
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L934)
+
+
+
+### Content {#content}
+
+_attribute_
+
+```python
+Content = TextContent | ImageContent
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L86)
+
+
+### ImageContent {#imagecontent}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L75)
+
+
+**Attributes**
+
+- `type`: `Literal['image']`
+- `source`: `str`
+- `media_type`: `str`
+
+
+### Message {#message}
+
+_attribute_
+
+```python
+Message = UserMessage | AssistantMessage | ToolResultMessage
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L136)
+
+
+### MessageStream {#messagestream}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L327)
+
+
+**Methods**
+
+#### `attach_task` {#messagestream-attach-task}
+
+```python
+attach_task(task: asyncio.Task) -> None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L335)
+
+
+#### `push` {#messagestream-push}
+
+```python
+push(event: StreamEvent) -> None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L347)
+
+
+#### `set_result` {#messagestream-set-result}
+
+```python
+set_result(message: AssistantMessage) -> None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L352)
+
+
+#### `result` {#messagestream-result}
+
+```python
+result() -> AssistantMessage
+```
+
+Return the final assistant message.
+
+Blocks not just on the result future, but also on the producer
+task's completion — the producer's `finally` block runs
+`_fire_response_listeners` (after `set_result`), so
+without waiting for the task, callers under `asyncio.run`
+teardown could exit before async response listeners have run.
+Producer exceptions are NOT re-raised here; they were already
+surfaced via the result future or the stream's error events.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L365)
+
+
+
+### Model {#model}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L55)
+
+
+**Attributes**
+
+- `id`: `str`
+- `provider_id`: `str`
+- `api`: `str`
+- `reasoning`: `bool`
+- `context_window`: `int`
+- `max_tokens`: `int`
+- `temperature`: `float`
+- `cost`: `ModelCost | None`
+
+
+### ModelCost {#modelcost}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L41)
+
+
+**Attributes**
+
+- `input`: `float`
+- `output`: `float`
+- `cache_read`: `float`
+- `cache_write`: `float`
+
+
+### OnChunkCallback {#onchunkcallback}
+
+_attribute_
+
+```python
+OnChunkCallback = Callable[['StreamEvent', Model], Awaitable[None] | None]
+```
+
+Persistent observer. Fires for every StreamEvent pushed onto the stream
+(start, text_delta, thinking_delta, toolcall_delta, done, error, ...).
+Heavy listeners should early-return on irrelevant event types — this hook
+fires hot. Return value is ignored.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L419)
+
+
+### OnPayloadCallback {#onpayloadcallback}
+
+_attribute_
+
+```python
+OnPayloadCallback = Callable[[dict, Model], Awaitable[dict | None] | dict | None]
+```
+
+Optional callback for inspecting/replacing provider payloads before sending.
+Return a dict to replace the payload, or None to keep unchanged.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L406)
+
+
+### OnRequestCallback {#onrequestcallback}
+
+_attribute_
+
+```python
+OnRequestCallback = Callable[[dict, Model], Awaitable[None] | None]
+```
+
+Persistent observer. Fires just before HTTP send, after any per-call
+`StreamOptions.on_payload` mutation has been applied. Receives the final
+wire payload dict and the Model. Return value is ignored.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L414)
+
+
+### OnResponseBodyCallback {#onresponsebodycallback}
+
+_attribute_
+
+```python
+OnResponseBodyCallback = Callable[[dict | None, Model, BaseException | None], Awaitable[None] | None]
+```
+
+Persistent observer. Fires exactly once per `stream()` call, in a
+finally block, after the stream terminates.
+
+- body: assembled provider response as a dict (same shape a non-streaming
+  call to the provider would have returned), or None if the stream failed
+  before a response could be assembled.
+- exc: the exception that ended the stream (including
+  `asyncio.CancelledError`), or None on normal completion.
+Return value is ignored.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L425)
+
+
+### OnResponseCallback {#onresponsecallback}
+
+_attribute_
+
+```python
+OnResponseCallback = Callable[['ProviderResponse', Model], Awaitable[None] | None]
+```
+
+Optional callback invoked after an HTTP response is received.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L410)
+
+
+### Provider {#provider}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L681)
+
+
+**Methods**
+
+#### `stream` {#provider-stream}
+
+```python
+stream(
+    model: Model,
+    messages: list[Message],
+    *,
+    system_prompt: str = '',
+    tools: list[ToolDefinition] | None = None,
+    tool_choice: ToolChoice | None = None,
+    options: StreamOptions | None = None,
+) -> MessageStream
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L683)
+
+
+#### `generate` {#provider-generate}
+
+```python
+generate(
+    model: Model,
+    messages: list[Message],
+    *,
+    system_prompt: str = '',
+    tools: list[ToolDefinition] | None = None,
+    tool_choice: ToolChoice | None = None,
+    options: StreamOptions | None = None,
+    max_output_tokens: int | None = None,
+    temperature: float | None = None,
+    reasoning: ReasoningControl | None = None,
+) -> AssistantMessage
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L694)
+
+
+
+### ProviderResponse {#providerresponse}
+
+_class_
+
+```python
+ProviderResponse(status: int, headers: dict[str, str] = dict())
+```
+
+HTTP response metadata exposed to on_response callbacks.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L398)
+
+
+**Attributes**
+
+- `status`: `int`
+- `headers`: `dict[str, str]`
+
+
+### ReasoningControl {#reasoningcontrol}
+
+_class_
+
+Provider-independent reasoning controls.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L33)
+
+
+**Attributes**
+
+- `mode`: `ReasoningMode`
+- `effort`: `ReasoningEffort`
+- `summary`: `ReasoningSummary`
+
+
+### ReasoningEffort {#reasoningeffort}
+
+_attribute_
+
+```python
+ReasoningEffort = Literal['minimal', 'low', 'medium', 'high', 'max']
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L27)
+
+
+### ReasoningMode {#reasoningmode}
+
+_attribute_
+
+```python
+ReasoningMode = Literal['off', 'auto', 'on']
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L26)
+
+
+### ReasoningSummary {#reasoningsummary}
+
+_attribute_
+
+```python
+ReasoningSummary = Literal['none', 'auto', 'detailed', 'summarized']
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L28)
+
+
+### StreamEvent {#streamevent}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L234)
+
+
+**Attributes**
+
+- `type`: `Literal['start', 'text_start', 'text_delta', 'text_end', 'thinking_start', 'thinking_delta', 'thinking_end', 'toolcall_start', 'toolcall_delta', 'toolcall_end', 'done', 'error']`
+- `content_index`: `int | None`
+- `delta`: `str | None`
+- `partial`: `AssistantMessage | None`
+- `error_message`: `str | None`
+- `error_type`: `str | None`
+- `error_code`: `str | None`
+- `status_code`: `int | None`
+- `retry_after`: `float | None`
+- `provider_id`: `str | None`
+- `model_id`: `str | None`
+- `tokens_in`: `int | None`
+- `context_window`: `int | None`
+
+
+### StreamOptions {#streamoptions}
+
+_class_
+
+Options bag for Provider.stream(), transparent to the agent loop.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L642)
+
+
+**Attributes**
+
+- `model_config`
+- `reasoning`: `ReasoningControl`
+- `signal`: `asyncio.Event | None`
+- `on_payload`: `OnPayloadCallback | None`
+- `on_response`: `OnResponseCallback | None`
+- `on_model_attempt`: `OnModelAttemptCallback | None`
+
+
+### TextContent {#textcontent}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L70)
+
+
+**Attributes**
+
+- `type`: `Literal['text']`
+- `text`: `str`
+
+
+### ThinkingContent {#thinkingcontent}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L81)
+
+
+**Attributes**
+
+- `type`: `Literal['thinking']`
+- `thinking`: `str`
+
+
+### ToolCall {#toolcall}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L89)
+
+
+**Attributes**
+
+- `type`: `Literal['tool_call']`
+- `id`: `str`
+- `name`: `str`
+- `arguments`: `JsonObject`
+
+
+### ToolDefinition {#tooldefinition}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L228)
+
+
+**Attributes**
+
+- `name`: `str`
+- `description`: `str`
+- `parameters`: `JsonObject`
+
+
+### ToolResultMessage {#toolresultmessage}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L124)
+
+
+**Attributes**
+
+- `role`: `Literal['tool_result']`
+- `tool_call_id`: `str`
+- `tool_name`: `str`
+- `content`: `list[Content]`
+- `details`: `StructuredValue`
+- `is_error`: `bool`
+- `timestamp`: `float | None`
+- `metadata`: `JsonObject`
+- `run_id`: `str | None`
+
+
+### Usage {#usage}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L48)
+
+
+**Attributes**
+
+- `input_tokens`: `int`
+- `output_tokens`: `int`
+- `cache_read_tokens`: `int`
+- `cache_write_tokens`: `int`
+
+
+### UserMessage {#usermessage}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L96)
+
+
+**Attributes**
+
+- `role`: `Literal['user']`
+- `content`: `list[Content]`
+- `timestamp`: `float | None`
+- `metadata`: `JsonObject`
+- `run_id`: `str | None`
+
+
+### is_synthetic_message {#is-synthetic-message}
+
+_function_
+
+```python
+is_synthetic_message(message: Message) -> bool
+```
+
+True if `message` was injected by the framework rather than a human.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L171)
+
+
+### synthetic_user_message {#synthetic-user-message}
+
+_function_
+
+```python
+synthetic_user_message(text: str, *, source: str) -> UserMessage
+```
+
+Build a user-role message injected by the framework, not typed by a human.
+
+All injected user-role messages MUST be created through this factory so
+downstream consumers can branch on a single marker
+(`metadata["synthetic"] is True`). `source` (e.g. `"todo_guard"`,
+`"goal_continuation"`) is for tracing/debugging only — UI behavior
+should never depend on it.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L153)
+
+
+### chain_providers {#chain-providers}
+
+_function_
+
+```python
+chain_providers(model: object) -> list['BaseProvider']
+```
+
+Return the unique BaseProvider instances backing a bound model.
+
+Walks a model's `chain` (FallbackBoundModel-like) or its single
+`.provider` (plain BoundModel-like). Uses duck typing on `.chain` to
+avoid importing `cubeloop.providers.fallback` into this base module —
+`fallback` already depends on `base`, so the reverse import would
+cycle.
+
+For `FallbackBoundModel`-like inputs, iterates the chain and dedupes
+providers by identity. Chain entries whose `.provider` isn't a
+`BaseProvider` are logged at WARNING via stdlib `logging` and
+skipped — tracing / metrics need the `subscribe_request` /
+`subscribe_chunk` / `subscribe_response` interface that only
+`BaseProvider` exposes. (cubepi does not depend on loguru; hosts that
+use it can intercept stdlib logging.)
+
+For plain bound models, returns `[model.provider]` if it is a
+`BaseProvider`. For `None` or any other input, returns `[]`.
+
+Used by `cubeloop.tracing.recorder.Recorder.attach` and
+`cubeloop.tracing.meter.Meter.attach` to subscribe to every leg of a
+fallback chain so post-failover provider events land in the trace /
+metric stream.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L1008)
+
+
+### collect_agent_providers {#collect-agent-providers}
+
+_function_
+
+```python
+collect_agent_providers(agent: Any) -> list['BaseProvider']
+```
+
+Return the unique BaseProvider instances backing an agent.
+
+Walks `agent._model` via [`chain_providers`](./cubeloop-providers#chain-providers) and falls back to a
+public `provider` attribute on the agent for legacy code paths. Used
+by both `cubeloop.tracing.recorder.Recorder.attach` and
+`cubeloop.tracing.meter.Meter.attach` to dedupe the prelude that
+finds providers to subscribe to.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L1059)
+
+
+### CapabilityDescriptor {#capabilitydescriptor}
+
+_class_
+
+Vendor quirks for one endpoint. Empty default = legacy no-op.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/capability.py#L66)
+
+
+**Attributes**
+
+- `reasoning`: `ReasoningCapability | None`
+- `temperature`: `TemperatureSpec`
+- `max_tokens_field`: `Literal['max_tokens', 'max_completion_tokens']`
+- `supports_tools`: `bool`
+- `supports_images`: `bool`
+- `supports_streaming`: `bool`
+
+
+### CapabilityWarning {#capabilitywarning}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/capability.py#L56)
+
+
+**Attributes**
+
+- `code`: `str`
+- `message`: `str`
+
+
+### PayloadPreview {#payloadpreview}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/capability.py#L61)
+
+
+**Attributes**
+
+- `payload`: `dict[str, Any]`
+- `warnings`: `list[CapabilityWarning]`
+
+
+### ReasoningCapability {#reasoningcapability}
+
+_class_
+
+How one endpoint maps standard reasoning controls onto its wire payload.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/capability.py#L43)
+
+
+**Attributes**
+
+- `mode_payloads`: `dict[ReasoningMode, dict[str, Any]]`
+- `effort_path`: `str | None`
+- `effort_values`: `dict[ReasoningEffort, Any]`
+- `summary_path`: `str | None`
+- `summary_values`: `dict[ReasoningSummary, Any]`
+- `include_payloads`: `dict[str, dict[str, Any]]`
+- `apply_effort_when_off`: `bool`
+- `unsupported_mode_policy`: `UnsupportedModePolicy`
+
+
+### TemperatureSpec {#temperaturespec}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/capability.py#L22)
+
+
+**Attributes**
+
+- `mode`: `Literal['free', 'fixed', 'ignored']`
+- `min`: `float`
+- `max`: `float`
+- `default`: `float`
+- `fixed_value`: `float | None`
+
+
+### apply_reasoning_control {#apply-reasoning-control}
+
+_function_
+
+```python
+apply_reasoning_control(
+    kwargs: dict[str, Any],
+    capability: CapabilityDescriptor | ReasoningCapability,
+    control: ReasoningControl,
+    *,
+    model: Model | None = None,
+) -> list[CapabilityWarning]
+```
+
+Apply provider-independent reasoning controls to a provider payload.
+
+When `model.reasoning` is False, any requested mode other than "off" is
+treated as "off" — the model can't reason, so no effort/summary/include
+fields are written and only the "off" mode payload (if any) applies. This
+is what lets a hybrid model's off-payload (e.g. Qwen's
+`enable_thinking: false`) keep firing regardless of `model.reasoning`,
+while never sending enable/effort/summary fields to a model that can't use
+them. Callers should invoke this unconditionally rather than re-deriving
+their own `model.reasoning` gate.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/capability.py#L131)
+
+
+### lint_capability {#lint-capability}
+
+_function_
+
+```python
+lint_capability(
+    model: Model,
+    capability: CapabilityDescriptor,
+) -> list[CapabilityWarning]
+```
+
+Detect capability mappings that are known to be invalid for an API shape.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/capability.py#L214)
+
+
+### preview_payload {#preview-payload}
+
+_function_
+
+```python
+preview_payload(
+    model: Model,
+    capability: CapabilityDescriptor,
+    control: ReasoningControl,
+    base_payload: dict[str, Any] | None = None,
+) -> PayloadPreview
+```
+
+Return the payload fragment produced by applying reasoning controls.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/capability.py#L199)
+
+
+### FauxProvider {#fauxprovider}
+
+_class_
+
+```python
+FauxProvider(
+    *,
+    tokens_per_second: float | None = None,
+    token_size_min: int = 3,
+    token_size_max: int = 5,
+    provider_id: str = '',
+)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/faux.py#L157)
+
+
+**Attributes**
+
+- `call_count`
+- `pending_response_count`: `int`
+- `prompt_cache`: `dict[str, str]` — Read-only access to the prompt cache for test assertions.
+
+
+**Methods**
+
+#### `set_responses` {#fauxprovider-set-responses}
+
+```python
+set_responses(responses: list[FauxResponseStep]) -> None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/faux.py#L216)
+
+
+#### `append_responses` {#fauxprovider-append-responses}
+
+```python
+append_responses(responses: list[FauxResponseStep]) -> None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/faux.py#L219)
+
+
+#### `clear_prompt_cache` {#fauxprovider-clear-prompt-cache}
+
+```python
+clear_prompt_cache() -> None
+```
+
+Clear the prompt cache, useful between test scenarios.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/faux.py#L226)
+
+
+#### `stream` {#fauxprovider-stream}
+
+```python
+stream(
+    model: Model,
+    messages: list[Message],
+    *,
+    system_prompt: str = '',
+    tools: list[ToolDefinition] | None = None,
+    tool_choice: ToolChoice | None = None,
+    options: StreamOptions | None = None,
+) -> MessageStream
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/faux.py#L268)
+
+
+
+### faux_assistant_message {#faux-assistant-message}
+
+_function_
+
+```python
+faux_assistant_message(
+    content: str | FauxContentBlock | list[FauxContentBlock],
+    *,
+    stop_reason: str = 'stop',
+    error_message: str | None = None,
+) -> AssistantMessage
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/faux.py#L65)
+
+
+### faux_text {#faux-text}
+
+_function_
+
+```python
+faux_text(text: str) -> TextContent
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/faux.py#L48)
+
+
+### faux_thinking {#faux-thinking}
+
+_function_
+
+```python
+faux_thinking(thinking: str) -> ThinkingContent
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/faux.py#L52)
+
+
+### faux_tool_call {#faux-tool-call}
+
+_function_
+
+```python
+faux_tool_call(
+    name: str,
+    arguments: dict[str, Any],
+    *,
+    id: str | None = None,
+) -> ToolCall
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/faux.py#L56)
+
+
+### DEFAULT_TRIGGER_ERRORS {#default-trigger-errors}
+
+_attribute_
+
+```python
+DEFAULT_TRIGGER_ERRORS: frozenset[type[ProviderError]] = frozenset({RateLimited, ProviderUnavailable, ContextLengthExceeded, ProviderBadRequest})
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/fallback.py#L44)
+
+
+### FallbackBoundModel {#fallbackboundmodel}
+
+_class_
+
+```python
+FallbackBoundModel(
+    chain: tuple[BoundModel, ...],
+    trigger_errors: frozenset[type[ProviderError]] = DEFAULT_TRIGGER_ERRORS,
+    retry_errors: frozenset[type[ProviderError]] = DEFAULT_RETRY_ERRORS,
+    max_retries_per_model: int = 3,
+    max_retry_after: float = 5.0,
+    retry_backoff: float = 0.0,
+    sticky_within_run: bool = True,
+    on_failover: _FallbackOnFailover | None = None,
+    on_retry: _FallbackOnRetry | None = None,
+)
+```
+
+Ordered chain of BoundModels — retry the active leg, then hop.
+
+chain[0] is the user-selected primary. Transient errors
+(`DEFAULT_RETRY_ERRORS`) are retried on the same model before the next
+chain entry is tried. Residual `ProviderBadRequest` / `ModelNotFound`
+hop without same-model retry. Mid-stream errors (after the first
+non-error event) are forwarded as-is.
+
+Sticky active leg: after a successful response from chain[i], later
+`stream` / `generate` calls in the same agent run (or same task, when
+used standalone) start at *i*. A new `Agent.prompt` resets to chain[0]
+via `begin_fallback_run`.
+
+provider and spec proxy chain[0] so tracing/billing code that reads
+agent._model.provider / agent._model.spec continues to work unchanged.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/fallback.py#L197)
+
+
+**Attributes**
+
+- `chain`: `tuple[BoundModel, ...]`
+- `trigger_errors`: `frozenset[type[ProviderError]]`
+- `retry_errors`: `frozenset[type[ProviderError]]`
+- `max_retries_per_model`: `int`
+- `max_retry_after`: `float`
+- `retry_backoff`: `float`
+- `sticky_within_run`: `bool`
+- `on_failover`: `_FallbackOnFailover | None`
+- `on_retry`: `_FallbackOnRetry | None`
+- `provider`: `Provider`
+- `spec`: `Model`
+
+
+**Methods**
+
+#### `reset_active` {#fallbackboundmodel-reset-active}
+
+```python
+reset_active() -> None
+```
+
+Reset the current-run sticky pointer to `chain[0]`.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/fallback.py#L242)
+
+
+#### `stream` {#fallbackboundmodel-stream}
+
+```python
+stream(
+    messages: list[Message],
+    *,
+    system_prompt: str = '',
+    tools: list[ToolDefinition] | None = None,
+    tool_choice: ToolChoice | None = None,
+    options: StreamOptions | None = None,
+) -> MessageStream
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/fallback.py#L369)
+
+
+#### `generate` {#fallbackboundmodel-generate}
+
+```python
+generate(
+    messages: list[Message],
+    *,
+    system_prompt: str = '',
+    tools: list[ToolDefinition] | None = None,
+    tool_choice: ToolChoice | None = None,
+    options: StreamOptions | None = None,
+    max_output_tokens: int | None = None,
+    temperature: float | None = None,
+    reasoning: ReasoningControl | None = None,
+) -> AssistantMessage
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/fallback.py#L489)
+
+
+
+### models_are_equal {#models-are-equal}
+
+_function_
+
+```python
+models_are_equal(a: Model | None, b: Model | None) -> bool
+```
+
+Return true when both model specs refer to the same provider/model id.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/models.py#L6)
+
+
+### get_capability_profile {#get-capability-profile}
+
+_function_
+
+```python
+get_capability_profile(provider: str, api: str | None = None) -> CapabilityDescriptor
+```
+
+Return the built-in capability profile for a provider/API pair.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/reasoning_profiles.py#L35)
+
+
+
+<!-- GENERATED by build_api_reference.py — DO NOT EDIT -->

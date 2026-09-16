@@ -1,0 +1,654 @@
+---
+id: cubeloop-middleware
+title: cubeloop.middleware
+sidebar_position: 5
+hide_table_of_contents: false
+---
+
+# `cubeloop.middleware`
+
+### Middleware {#middleware}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/base.py#L34)
+
+
+**Attributes**
+
+- `hitl`: `HitlBinding | None`
+
+
+**Methods**
+
+#### `transform_context` {#middleware-transform-context}
+
+```python
+transform_context(
+    messages: list[Message],
+    *,
+    ctx: AgentContext,
+    signal: asyncio.Event | None = None,
+) -> list[Message]
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/base.py#L37)
+
+
+#### `convert_to_llm` {#middleware-convert-to-llm}
+
+```python
+convert_to_llm(messages: list[Message], *, ctx: AgentContext) -> list[Message]
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/base.py#L46)
+
+
+#### `before_tool_call` {#middleware-before-tool-call}
+
+```python
+before_tool_call(
+    ctx: BeforeToolCallContext,
+    *,
+    signal: asyncio.Event | None = None,
+) -> BeforeToolCallResult | None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/base.py#L51)
+
+
+#### `after_tool_call` {#middleware-after-tool-call}
+
+```python
+after_tool_call(
+    ctx: AfterToolCallContext,
+    *,
+    signal: asyncio.Event | None = None,
+) -> AfterToolCallResult | None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/base.py#L59)
+
+
+#### `resolve_tool_call` {#middleware-resolve-tool-call}
+
+```python
+resolve_tool_call(
+    tool_call: ToolCall,
+    *,
+    context: AgentContext,
+    signal: asyncio.Event | None = None,
+) -> ToolCall | None
+```
+
+Rewrite a tool call before validation/hooks. Return None to pass
+through unchanged.
+
+The returned ToolCall MUST keep the original `id` — the result
+message is keyed by it on the wire.
+
+Composition is FIRST-NON-NONE-WINS: the first middleware to return a
+rewritten call short-circuits the chain. This differs from
+`before_tool_call`, which chains sequentially. A resolver never
+sees another resolver's output.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/base.py#L67)
+
+
+#### `transform_system_prompt` {#middleware-transform-system-prompt}
+
+```python
+transform_system_prompt(
+    system_prompt: str,
+    *,
+    ctx: AgentContext,
+    signal: asyncio.Event | None = None,
+) -> str
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/base.py#L87)
+
+
+#### `should_stop_after_turn` {#middleware-should-stop-after-turn}
+
+```python
+should_stop_after_turn(ctx: AgentContext) -> bool
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/base.py#L96)
+
+
+#### `after_model_response` {#middleware-after-model-response}
+
+```python
+after_model_response(
+    response: AssistantMessage,
+    ctx: AgentContext,
+    *,
+    signal: asyncio.Event | None = None,
+) -> TurnAction | None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/base.py#L99)
+
+
+#### `on_run_end` {#middleware-on-run-end}
+
+```python
+on_run_end(
+    ctx: AgentContext,
+    *,
+    signal: asyncio.Event | None = None,
+) -> list[Message] | None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/base.py#L108)
+
+
+#### `extra_llm_calls` {#middleware-extra-llm-calls}
+
+```python
+extra_llm_calls() -> Iterable[BoundModel]
+```
+
+Declare LLM calls this middleware drives outside the agent's main
+bound model.
+
+Each entry is a `BoundModel` — the same handle the user gets from
+`provider.model(...)`. `cubeloop.tracing.Recorder` uses these to:
+
+* Subscribe listeners on any provider the recorder isn't already
+  watching, so the resulting calls show up in the trace tree
+  alongside the agent's own chat spans.
+* Identify middleware-owned calls by `(spec.provider_id, spec.id)`
+  so they don't overwrite the root `invoke_agent` span's
+  attribution (provider name, system prompt hash, tool list). This
+  model-based gate is what handles the common "reuse one provider
+  client, swap the model" pattern — listener identity alone would
+  attribute the middleware's first call to the agent.
+
+Default is empty — middlewares that do not call any LLM directly
+need not override.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/base.py#L116)
+
+
+
+### TurnAction {#turnaction}
+
+_class_
+
+```python
+TurnAction(
+    response: AssistantMessage | None = None,
+    inject_messages: list[Message] = list(),
+    decision: Literal['natural', 'stop', 'loop_to_model'] = 'natural',
+)
+```
+
+Directs the agent loop's next step after a model response.
+
+Composition (chain): each middleware sees previous middleware's
+TurnAction. Last middleware's value wins for response and decision.
+inject_messages concatenates across the chain.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/base.py#L20)
+
+
+**Attributes**
+
+- `response`: `AssistantMessage | None`
+- `inject_messages`: `list[Message]`
+- `decision`: `Literal['natural', 'stop', 'loop_to_model']`
+
+
+### compose_middleware {#compose-middleware}
+
+_function_
+
+```python
+compose_middleware(middlewares: list[Middleware]) -> dict[str, Callable]
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/base.py#L145)
+
+
+### CompactionMiddleware {#compactionmiddleware}
+
+_class_
+
+```python
+CompactionMiddleware(
+    *,
+    summary_model: BoundModel,
+    max_tokens_before_compact: int,
+    keep_tail_tokens: int = 8000,
+    max_summary_tokens: int | None = None,
+    min_compact_messages: int = 4,
+    prune_tool_outputs: bool = True,
+    tool_result_compressor: ToolResultCompressor | None = None,
+    summary_prompt: str | None = None,
+    existing_summary_suffix: str | None = None,
+)
+```
+
+Keep long histories within context by summarizing older turns.
+
+Three layered guards keep the summariser from misbehaving under load:
+
+- **Pre-pruning pass** (cheap, no LLM call) replaces large old tool
+  results with one-line summaries before the LLM ever sees them.
+- **Circuit breaker** gates only the LLM call; after
+  `_MAX_FAILURES` consecutive errors, switches to the deterministic
+  fallback summariser (still compacts context — never gets stuck).
+- **Anti-thrashing guard** skips compaction when prior runs saved
+  under `_MIN_SAVINGS_PCT`; resets when savings recover, the
+  boundary advances by `_ANTI_THRASH_NEW_MSGS` messages, or raw
+  history exceeds `max_tokens_before_compact * _ANTI_THRASH_FORCE_RATIO`.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/compaction/__init__.py#L158)
+
+
+**Methods**
+
+#### `transform_context` {#compactionmiddleware-transform-context}
+
+```python
+transform_context(
+    messages: list[Message],
+    *,
+    ctx: AgentContext,
+    signal: asyncio.Event | None = None,
+) -> list[Message]
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/compaction/__init__.py#L197)
+
+
+#### `extra_llm_calls` {#compactionmiddleware-extra-llm-calls}
+
+```python
+extra_llm_calls() -> tuple[BoundModel, ...]
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/compaction/__init__.py#L400)
+
+
+
+### CompactionState {#compactionstate}
+
+_class_
+
+JSON-safe summary state stored in `AgentContext.extra`.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/compaction/state.py#L19)
+
+
+**Attributes**
+
+- `summary`: `str`
+- `summarized_message_ids`: `list[str]`
+- `summarized_message_refs`: `list[str]`
+- `last_summarized_message_id`: `str | None`
+- `is_fallback`: `bool`
+- `preserved_tool_results`: `list[PreservedToolResult]`
+
+
+### GoalMiddleware {#goalmiddleware}
+
+_class_
+
+```python
+GoalMiddleware(evaluator: BoundModel, max_evaluations: int = 10)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/goal.py#L73)
+
+
+**Methods**
+
+#### `extra_llm_calls` {#goalmiddleware-extra-llm-calls}
+
+```python
+extra_llm_calls() -> Iterable[BoundModel]
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/goal.py#L84)
+
+
+#### `transform_context` {#goalmiddleware-transform-context}
+
+```python
+transform_context(
+    messages: list[Message],
+    *,
+    ctx: AgentContext,
+    signal: asyncio.Event | None = None,
+) -> list[Message]
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/goal.py#L87)
+
+
+#### `on_run_end` {#goalmiddleware-on-run-end}
+
+```python
+on_run_end(
+    ctx: AgentContext,
+    *,
+    signal: asyncio.Event | None = None,
+) -> list[Message] | None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/goal.py#L122)
+
+
+
+### SubagentMiddleware {#subagentmiddleware}
+
+_class_
+
+```python
+SubagentMiddleware(
+    *,
+    subagents: dict[str, SubagentSpec],
+    default_model: BoundModel,
+    shared_tools: Sequence[AgentTool[BaseModel]] = (),
+    inherited_middleware: Sequence[Middleware] = (),
+    excluded_tool_names: set[str] | None = None,
+    event_mapper: EventMapper | None = None,
+    event_handler: EventHandler | None = None,
+    tracer: SubagentTracer | None = None,
+)
+```
+
+Inject a tool that delegates one task to an ephemeral child agent.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/subagents.py#L103)
+
+
+**Attributes**
+
+- `tools`: `list[AgentTool[BaseModel]]`
+- `subagents`: `dict[str, SubagentSpec]`
+- `shared_tools`: `tuple[AgentTool[BaseModel], ...]`
+
+
+### SubagentRequest {#subagentrequest}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/subagents.py#L87)
+
+
+**Attributes**
+
+- `name`: `str`
+- `role`: `str`
+- `task`: `str`
+- `prompt`: `str`
+- `subagent_type`: `str`
+
+
+### SubagentResult {#subagentresult}
+
+_class_
+
+```python
+SubagentResult(
+    agent_id: str,
+    text: str,
+    events: list[StructuredValue],
+    error: str | None = None,
+)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/subagents.py#L95)
+
+
+**Attributes**
+
+- `agent_id`: `str`
+- `text`: `str`
+- `events`: `list[StructuredValue]`
+- `error`: `str | None`
+
+
+### SubagentSpec {#subagentspec}
+
+_class_
+
+```python
+SubagentSpec(
+    name: str,
+    description: str,
+    system_prompt: str,
+    model: BoundModel | None = None,
+    tools: Sequence[AgentTool[BaseModel]] = tuple(),
+    middleware: Sequence[Middleware] = tuple(),
+)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/subagents.py#L77)
+
+
+**Attributes**
+
+- `name`: `str`
+- `description`: `str`
+- `system_prompt`: `str`
+- `model`: `BoundModel | None`
+- `tools`: `Sequence[AgentTool[BaseModel]]`
+- `middleware`: `Sequence[Middleware]`
+
+
+### Todo {#todo}
+
+_class_
+
+A single todo item with content and status.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L132)
+
+
+**Attributes**
+
+- `content`: `str`
+- `status`: `Literal['pending', 'in_progress', 'completed']`
+
+
+### TodoGuardBlocked {#todoguardblocked}
+
+_class_
+
+A guard escalation payload carried across the forced end turn.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L149)
+
+
+**Attributes**
+
+- `guard_type`: `TodoGuardType`
+- `message`: `str`
+
+
+### Literal {#literal}
+
+_function_
+
+```python
+Literal(self, *parameters = ())
+```
+
+Special typing form to define literal types (a.k.a. value types).
+
+This form can be used to indicate to type checkers that the corresponding
+variable or function parameter has a value equivalent to the provided
+literal (or one of several literals):
+
+```python
+def validate_simple(data: Any) -> Literal[True]:  # always returns True
+    ...
+
+MODE = Literal['r', 'rb', 'w', 'wb']
+def open_helper(file: str, mode: MODE) -> str:
+    ...
+
+open_helper('/some/path', 'r')  # Passes type check
+open_helper('/other/path', 'typo')  # Error in type checker
+```
+
+Literal[...] cannot be subclassed. At runtime, an arbitrary value
+is allowed as type argument to Literal[...], but type checkers may
+impose restrictions.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main//opt/homebrew/Cellar/python@3.13/3.13.2/Frameworks/Python.framework/Versions/3.13/lib/python3.13/typing.py#L812)
+
+
+### TodoListMiddleware {#todolistmiddleware}
+
+_class_
+
+```python
+TodoListMiddleware(
+    *,
+    extra_ref: Callable[[], dict[str, Any]],
+    system_prompt: str = WRITE_TODOS_SYSTEM_PROMPT,
+    tool_description: str = WRITE_TODOS_TOOL_DESCRIPTION,
+)
+```
+
+Middleware that gives the agent a `write_todos` tool and enforces finalization.
+
+Hooks:
+- `tools`: exposes `write_todos` AgentTool that writes to extra.
+- `transform_system_prompt`: appends WRITE_TODOS_SYSTEM_PROMPT.
+- `transform_context`: renders current todo list as a UserMessage
+  appended to context (only when todos are present), so the model
+  always has an up-to-date view of the checklist at each turn.
+- `after_tool_call`: No-op for all tools except `write_todos`;
+  the write_todos tool execute() already writes to extra.  This hook
+  exists as a hook attachment point if needed in future.
+- `after_model_response`: full guard state machine —
+    * blocked guard: if blocked and pure-text → stop, clear state
+    * suppression: clear guard state once past the blocked episode
+    * parallel write_todos detection → inject error messages
+    * payload validation errors → inject error messages
+    * stale-todo soft reminder → inject UserMessage after threshold
+    * finalization hard guard → loop_to_model with correction message
+    * otherwise → return None (natural flow)
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L466)
+
+
+**Attributes**
+
+- `tools`
+
+
+**Methods**
+
+#### `transform_system_prompt` {#todolistmiddleware-transform-system-prompt}
+
+```python
+transform_system_prompt(
+    system_prompt: str,
+    *,
+    ctx: AgentContext,
+    signal: asyncio.Event | None = None,
+) -> str
+```
+
+Append the write_todos system instructions.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L508)
+
+
+#### `transform_context` {#todolistmiddleware-transform-context}
+
+```python
+transform_context(
+    messages: list[Message],
+    *,
+    ctx: AgentContext,
+    signal: asyncio.Event | None = None,
+) -> list[Message]
+```
+
+Inject current todo state as a UserMessage suffix when todos exist.
+
+We do not rely on persisted ToolResultMessages being visible on
+replay, so a lightweight reminder is injected at the end of the
+context to ensure the model always sees the current todo list.
+
+When no todos are set, messages are returned unchanged (no injection).
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L523)
+
+
+#### `after_tool_call` {#todolistmiddleware-after-tool-call}
+
+```python
+after_tool_call(
+    ctx: AfterToolCallContext,
+    *,
+    signal: asyncio.Event | None = None,
+) -> AfterToolCallResult | None
+```
+
+Override duplicate write_todos results when parallel calls are detected.
+
+For the normal (single call) case this is a no-op; write_todos.execute()
+already wrote the validated list to extra["todos"].
+
+For the parallel case, after_model_response snapshotted the pre-turn todos
+in extra["_todos_snapshot"].  Each duplicate write_todos call's result is
+replaced with an error here, and extra["todos"] is restored to the snapshot
+so the turn leaves the checklist unchanged.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L557)
+
+
+#### `after_model_response` {#todolistmiddleware-after-model-response}
+
+```python
+after_model_response(
+    response: AssistantMessage,
+    ctx: AgentContext,
+    *,
+    signal: asyncio.Event | None = None,
+) -> TurnAction | None
+```
+
+Guard state machine.
+
+Inspects the latest assistant message, transitions the blocked /
+stale-iteration state stored in `extra`, and returns a
+`TurnAction` when the loop needs an injected nudge or hard stop.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L653)
+
+
+
+### WriteTodosInput {#writetodosinput}
+
+_class_
+
+Input schema for the `write_todos` tool.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L262)
+
+
+**Attributes**
+
+- `todos`: `list[Todo]`
+
+
+
+<!-- GENERATED by build_api_reference.py — DO NOT EDIT -->

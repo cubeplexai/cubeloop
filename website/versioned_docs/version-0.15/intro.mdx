@@ -1,0 +1,84 @@
+---
+id: intro
+title: "CubeLoop — Pythonic async-native agent framework"
+description: "A Pythonic, async-native agent framework. Plain async functions, append-only checkpointing, three dependencies."
+slug: /
+sidebar_position: 0
+---
+
+import PackageVersion from '@site/src/components/PackageVersion';
+
+# CubeLoop
+
+**CubeLoop** is a Pythonic, async-native agent framework designed for high
+performance, readability, and production-grade persistence. It provides a
+leaner alternative to graph-based agent runtimes by modeling agent logic as
+a linear `while` loop that developers can easily trace and debug.
+
+CubeLoop powers [CubePlex](https://github.com/cubeplexai/cubeplex), a cloud-native
+platform for managed agents in team workspaces — skills, shared memory, MCP
+tools, persistent sandboxes, governed access, and self-hosted deploy on Docker
+Compose or Kubernetes.
+
+```bash
+pip install cubeloop
+```
+
+Then jump to the [Quick Start](./getting-started/quick-start.md) to ship a
+working tool-using agent in under five minutes.
+
+## What you get
+
+- **Plain async functions, not graph nodes.** The agent loop is a
+  `while` loop over message turns. You build tools as `async def`
+  functions; the framework routes calls and executes them in parallel.
+- **One streaming pattern.** Every provider yields `StreamEvent`s
+  through a `MessageStream`. You iterate it with `async for`. No
+  callback registries, no separate handler types for text vs. tools.
+- **Append-only checkpointing.** Persistence writes the new messages on
+  each turn, not the full transcript. O(1) DB I/O regardless of
+  conversation length — SQLite for laptops, Postgres for production.
+- **Native multi-provider.** Anthropic and OpenAI ship in the box,
+  through a `Provider` Protocol. Add a new provider in one class.
+- **Nine-hook middleware.** `transform_context`, `convert_to_llm`,
+  `transform_system_prompt`, `resolve_tool_call`, `before_tool_call`,
+  `after_tool_call`, `should_stop_after_turn`, `after_model_response`,
+  `on_run_end` — each with explicit composition rules. No mystery node ordering.
+- **MCP loaders.** Point at any
+  [Model Context Protocol](https://modelcontextprotocol.io) server
+  (HTTP or stdio) and get back a list of `AgentTool`s.
+- **OpenTelemetry built in.** Attach a `Tracer` and every prompt
+  produces a tree of OTel spans aligned with the GenAI Semantic
+  Conventions — works with Jaeger, Tempo, Honeycomb, Datadog, or any
+  OTLP-compatible backend. No payloads recorded by default; opt in
+  with `record_content=True` and a `redact` callback.
+- **Human-in-the-Loop.** Suspend an agent mid-run, route a decision to
+  a human (approve/reject/answer), then resume — with full checkpoint
+  persistence so the agent survives a process restart while waiting.
+
+## Where to go next
+
+| If you want to… | Start here |
+|---|---|
+| Install and run your first agent | [Getting Started → Installation](./getting-started/installation.md) |
+| Understand the building blocks | [Getting Started → Core Concepts](./getting-started/core-concepts.md) |
+| Wire a real tool-using agent | [Guides → Building Your First Agent](./guides/agents/first-agent.md) |
+| Persist a conversation across restarts | [Guides → SQLite Checkpointing](./guides/checkpointing/sqlite.md) |
+| Ship traces to Jaeger / Tempo / Honeycomb | [Guides → Tracing](./guides/tracing/overview.md) |
+| Look up a specific symbol | [API Reference](./api/index.mdx) |
+| See full working examples | [Recipes](./recipes/weather-agent.md) |
+| Port an existing langgraph agent | [Migration → From langgraph](./migration/from-langgraph.md) |
+
+## Status
+
+You are reading the **CubeLoop 0.15** release docs. This is the latest stable
+documentation set for installing CubeLoop and building against the published
+0.15 API.
+
+CubeLoop 0.15 adds execution sessions for hosts that need explicit attempt
+outcomes, identified input, and checkpoint-aware event delivery. See
+[Core Concepts](./getting-started/core-concepts.md) and the
+[API Reference](./api/index.mdx).
+
+Source, issues, and discussion live on
+[GitHub](https://github.com/cubeplexai/cubeloop).

@@ -528,7 +528,7 @@ wheels = [
 
 [[package]]
 name = "cubeloop"
-version = "0.14.1"
+version = "0.15.0"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
@@ -624,7 +624,7 @@ dev = [
 
 [[package]]
 name = "cubepi"
-version = "0.14.1"
+version = "0.15.0"
 source = { editable = "compat/cubepi" }
 
 [[package]]

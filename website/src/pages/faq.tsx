@@ -14,10 +14,8 @@ function reactNodeToText(node: React.ReactNode): string {
   if (node === null || node === undefined || typeof node === 'boolean') return '';
   if (typeof node === 'string' || typeof node === 'number') return String(node);
   if (Array.isArray(node)) return node.map(reactNodeToText).join('');
-  // React element
-  const el = node as React.ReactElement;
-  if (el && typeof el === 'object' && 'props' in el) {
-    return reactNodeToText(el.props.children);
+  if (React.isValidElement<{ children?: React.ReactNode }>(node)) {
+    return reactNodeToText(node.props.children);
   }
   return '';
 }
