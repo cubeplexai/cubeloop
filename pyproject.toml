@@ -1,6 +1,6 @@
 [project]
 name = "cubeloop"
-version = "0.14.1"
+version = "0.15.0"
 description = "Pythonic async-native agent framework"
 readme = "README.md"
 license = "MIT"
@@ -101,6 +101,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["cubeloop"]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["cubeloop", "README.md", "LICENSE"]
 
 [tool.uv.workspace]
 members = ["compat/cubepi"]

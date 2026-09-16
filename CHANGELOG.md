@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-16
+
+### Added
+
+- **Public execution sessions for service hosts.** Every `Agent` exposes
+  `agent.session` with typed prompt, continue, and HITL response requests.
+  Each attempt carries a run ID and attempt ID and returns a settled
+  `ExecutionResult` that distinguishes completion, suspension, cancellation,
+  failure, and incomplete history. Existing `Agent.prompt()`, `resume()`, and
+  `respond()` use the same sequential admission gate.
+- **Identified live input and session events.** Hosts can submit steering or
+  follow-up messages with an input ID, observe when an input is committed to
+  the checkpoint, and subscribe to bounded, attempt-scoped event delivery.
+  `TurnExecutionContext` captures the effective model, prompt, and tool
+  bindings for each model request.
+
+### Fixed
+
+- **Execution finalization and recovery are more consistent.** Failed or
+  cancelled attempts settle queued input and tool calls, preserve suspension
+  state across durable retries, and report checkpoint and event-delivery
+  failures without exposing a false successful outcome. Pending HITL cleanup
+  on Postgres and MySQL is fenced by run ID to avoid clearing another run's
+  request.
+
 ## [0.14.1] - 2026-09-10
 
 ### Fixed
@@ -811,7 +836,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **[0.2.0]** - 2026-05-10 — see the [release notes](https://github.com/cubeplexai/cubepi/releases/tag/v0.2.0).
 - **[0.1.0]** - 2026-05-09 — initial release. See the [release notes](https://github.com/cubeplexai/cubepi/releases/tag/v0.1.0).
 
-[Unreleased]: https://github.com/cubeplexai/cubeloop/compare/v0.14.1...HEAD
+[Unreleased]: https://github.com/cubeplexai/cubeloop/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/cubeplexai/cubeloop/compare/v0.14.1...v0.15.0
 [0.14.1]: https://github.com/cubeplexai/cubeloop/compare/v0.13.6...v0.14.1
 [0.13.6]: https://github.com/cubeplexai/cubeloop/compare/v0.13.5...v0.13.6
 [0.13.5]: https://github.com/cubeplexai/cubeloop/compare/v0.13.4...v0.13.5

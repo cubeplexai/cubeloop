@@ -1,0 +1,790 @@
+---
+id: cubeloop-agent
+title: cubeloop.agent
+sidebar_position: 1
+hide_table_of_contents: false
+---
+
+# `cubeloop.agent`
+
+### Agent {#agent}
+
+_class_
+
+```python
+Agent(
+    *,
+    model: BoundModel | FallbackBoundModel,
+    system_prompt: str = '',
+    tools: list[AgentTool] | None = None,
+    reasoning: ReasoningControl | None = None,
+    convert_to_llm: Callable[..., list[Message]] | None = None,
+    transform_context: Callable | None = None,
+    transform_system_prompt: Callable | None = None,
+    after_model_response: Callable | None = None,
+    before_tool_call: Callable | None = None,
+    resolve_tool_call: Callable | None = None,
+    after_tool_call: Callable | None = None,
+    should_stop_after_turn: Callable | None = None,
+    on_run_end: Callable | None = None,
+    on_payload: OnPayloadCallback | None = None,
+    on_response: OnResponseCallback | None = None,
+    steering_mode: str = 'one-at-a-time',
+    follow_up_mode: str = 'one-at-a-time',
+    tool_execution: str = 'parallel',
+    checkpointer: Checkpointer | None = None,
+    thread_id: str | None = None,
+    middleware: list[Middleware] | None = None,
+    deferred_tool_groups: list[DeferredToolGroup] | None = None,
+    deferred_tool_strategy: DeferredStrategy = 'dispatch',
+    channel: HitlChannel | None = None,
+    messages: Sequence[Message] | None = None,
+)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/agent.py#L176)
+
+
+**Attributes**
+
+- `convert_to_llm`
+- `transform_context`
+- `transform_system_prompt`
+- `after_model_response`
+- `before_tool_call`
+- `resolve_tool_call`: `Callable | None`
+- `after_tool_call`
+- `should_stop_after_turn`
+- `on_run_end`
+- `on_payload`
+- `on_response`
+- `tool_execution`
+- `checkpointer`
+- `thread_id`
+- `session`
+- `state`: `AgentState`
+- `channel`: `HitlChannel | None`
+- `in_flight_hitl_request`: `HitlRequest | None`
+
+
+**Methods**
+
+#### `subscribe` {#agent-subscribe}
+
+```python
+subscribe(listener: Callable) -> Callable[[], None]
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/agent.py#L335)
+
+
+#### `steer` {#agent-steer}
+
+```python
+steer(message: Message) -> None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/agent.py#L341)
+
+
+#### `cancel_steer` {#agent-cancel-steer}
+
+```python
+cancel_steer(steer_id: str) -> bool
+```
+
+Remove a not-yet-drained steering message by its steer_id.
+
+Returns True if a queued message was removed; False if it was already
+drained or never queued (best-effort cancel).
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/agent.py#L344)
+
+
+#### `follow_up` {#agent-follow-up}
+
+```python
+follow_up(message: Message) -> None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/agent.py#L352)
+
+
+#### `abort` {#agent-abort}
+
+```python
+abort() -> None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/agent.py#L355)
+
+
+#### `wait_for_idle` {#agent-wait-for-idle}
+
+```python
+wait_for_idle() -> None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/agent.py#L359)
+
+
+#### `reset` {#agent-reset}
+
+```python
+reset() -> None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/agent.py#L362)
+
+
+#### `prompt` {#agent-prompt}
+
+```python
+prompt(message: str | Message | list[Message], *, run_id: str | None = None) -> str
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/agent.py#L485)
+
+
+#### `fork` {#agent-fork}
+
+```python
+fork(
+    src_thread_id: str,
+    new_thread_id: str,
+    *,
+    after_run_id: str,
+    metadata: JsonObject | None = None,
+) -> None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/agent.py#L586)
+
+
+#### `fork_once` {#agent-fork-once}
+
+```python
+fork_once(
+    src_thread_id: str,
+    message: str | Message | list[Message],
+    *,
+    after_run_id: str,
+) -> ForkOnceResult
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/agent.py#L609)
+
+
+#### `resume` {#agent-resume}
+
+```python
+resume(*, run_id: str | None = None) -> str
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/agent.py#L728)
+
+
+#### `detach` {#agent-detach}
+
+```python
+detach() -> None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/agent.py#L899)
+
+
+#### `load_pending_hitl_request` {#agent-load-pending-hitl-request}
+
+```python
+load_pending_hitl_request() -> HitlRequest | None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/agent.py#L918)
+
+
+#### `respond` {#agent-respond}
+
+```python
+respond(*, question_id: str | None = None, answer: StructuredValue) -> None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/agent.py#L926)
+
+
+#### `abort_pending` {#agent-abort-pending}
+
+```python
+abort_pending(reason: str = 'aborted by host') -> None
+```
+
+Abort a pending HITL request and CLOSE the conversation.
+
+Per spec §5.2 "abort closes the conversation" — no new model call.
+Two-phase: Phase 1 (no lock) interrupts any in-flight HITL await via
+the agent signal; Phase 2 (with lock) appends synthetic deny
+tool_results + a terminal stop_reason="aborted" assistant message
+and emits AgentAbortedEvent.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/agent.py#L1047)
+
+
+
+### AgentState {#agentstate}
+
+_class_
+
+```python
+AgentState(
+    system_prompt: str = '',
+    model: Model = (lambda: Model(id='unknown', provider_id='unknown'))(),
+    reasoning: ReasoningControl = ReasoningControl(),
+    is_streaming: bool = False,
+    streaming_message: Message | None = None,
+    error_message: str | None = None,
+    active_run_id: str | None = None,
+    last_outcome: RunOutcome | None = None,
+    extra: JsonObject = dict(),
+    _tools: list[AgentTool] = list(),
+    _messages: list[Message] = list(),
+    _pending_tool_calls: set[str] = set(),
+)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/agent.py#L134)
+
+
+**Attributes**
+
+- `system_prompt`: `str`
+- `model`: `Model`
+- `reasoning`: `ReasoningControl`
+- `is_streaming`: `bool`
+- `streaming_message`: `Message | None`
+- `error_message`: `str | None`
+- `active_run_id`: `str | None`
+- `last_outcome`: `RunOutcome | None`
+- `extra`: `JsonObject`
+- `tools`: `list[AgentTool]`
+- `messages`: `list[Message]`
+- `pending_tool_calls`: `set[str]`
+
+
+### run_agent_loop {#run-agent-loop}
+
+_function_
+
+```python
+run_agent_loop(
+    *,
+    prompts: list[Message],
+    context: AgentContext,
+    model: BoundModel | FallbackBoundModel,
+    convert_to_llm: Callable,
+    emit: Callable,
+    transform_context: Callable | None = None,
+    transform_system_prompt: Callable | None = None,
+    after_model_response: Callable | None = None,
+    before_tool_call: Callable | None = None,
+    resolve_tool_call: Callable | None = None,
+    after_tool_call: Callable | None = None,
+    should_stop_after_turn: Callable | None = None,
+    get_steering_messages: Callable | None = None,
+    get_follow_up_messages: Callable | None = None,
+    on_run_end: Callable | None = None,
+    stream_options: StreamOptions | None = None,
+    tool_execution: str = 'parallel',
+    system_prompt: str | None = None,
+    set_outcome: Callable[[str], None] | None = None,
+) -> list[Message]
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/loop.py#L38)
+
+
+### run_agent_loop_continue {#run-agent-loop-continue}
+
+_function_
+
+```python
+run_agent_loop_continue(
+    *,
+    context: AgentContext,
+    model: BoundModel | FallbackBoundModel,
+    convert_to_llm: Callable,
+    emit: Callable,
+    transform_context: Callable | None = None,
+    transform_system_prompt: Callable | None = None,
+    after_model_response: Callable | None = None,
+    before_tool_call: Callable | None = None,
+    resolve_tool_call: Callable | None = None,
+    after_tool_call: Callable | None = None,
+    should_stop_after_turn: Callable | None = None,
+    get_steering_messages: Callable | None = None,
+    get_follow_up_messages: Callable | None = None,
+    on_run_end: Callable | None = None,
+    stream_options: StreamOptions | None = None,
+    tool_execution: str = 'parallel',
+    system_prompt: str | None = None,
+    set_outcome: Callable[[str], None] | None = None,
+) -> list[Message]
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/loop.py#L103)
+
+
+### tool {#tool}
+
+_function_
+
+```python
+tool(
+    fn: ToolFunc | None = None,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+    execution_mode: Literal['sequential', 'parallel'] | None = None,
+) -> AgentTool[Any] | Callable[[ToolFunc], AgentTool[Any]]
+```
+
+Turn an async function into an [`AgentTool`](./cubeloop-agent#agenttool).
+
+Usable bare (`@tool`) or with arguments (`@tool(name=..., ...)`).
+
+- The tool's input schema is generated from the function's parameters; each
+  needs a type annotation. `Field(...)` defaults/metadata are honoured.
+- If the function declares `tool_call_id`, `signal`, or `on_update`,
+  the loop's values are passed through; otherwise they are omitted from the
+  schema and not passed.
+- The return value may be an `AgentToolResult`, a `str`, a `Content`,
+  or a `list[Content]`.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/tool_decorator.py#L180)
+
+
+### execute_tool_calls {#execute-tool-calls}
+
+_function_
+
+```python
+execute_tool_calls(
+    context: AgentContext,
+    assistant_message: AssistantMessage,
+    *,
+    tool_execution: str = 'parallel',
+    before_tool_call: Callable | None = None,
+    resolve_tool_call: Callable | None = None,
+    after_tool_call: Callable | None = None,
+    signal: asyncio.Event | None = None,
+    emit: Callable,
+) -> ToolCallBatch
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/tools.py#L419)
+
+
+### AfterToolCallContext {#aftertoolcallcontext}
+
+_class_
+
+```python
+AfterToolCallContext(
+    assistant_message: AssistantMessage,
+    tool_call: ToolCall,
+    args: BaseModel | JsonObject,
+    result: AgentToolResult,
+    is_error: bool,
+    context: AgentContext,
+)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/types.py#L96)
+
+
+**Attributes**
+
+- `assistant_message`: `AssistantMessage`
+- `tool_call`: `ToolCall`
+- `args`: `BaseModel | JsonObject`
+- `result`: `AgentToolResult`
+- `is_error`: `bool`
+- `context`: `AgentContext`
+
+
+### AfterToolCallResult {#aftertoolcallresult}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/types.py#L81)
+
+
+**Attributes**
+
+- `content`: `list[Content] | None`
+- `details`: `StructuredValue`
+- `is_error`: `bool | None`
+- `terminate`: `bool | None`
+
+
+### AgentContext {#agentcontext}
+
+_class_
+
+```python
+AgentContext(
+    system_prompt: str,
+    messages: list[Message],
+    tools: list[AgentTool] | None = None,
+    extra: JsonObject = dict(),
+    run_id: str | None = None,
+    attempt_id: str | None = None,
+    turn_id: str | None = None,
+    turn_execution_context: Any = None,
+    on_turn_context: Callable[[Any], Any] | None = None,
+    set_input_admission: Callable[[bool], None] | None = None,
+)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/types.py#L56)
+
+
+**Attributes**
+
+- `system_prompt`: `str`
+- `messages`: `list[Message]`
+- `tools`: `list[AgentTool] | None`
+- `extra`: `JsonObject`
+- `run_id`: `str | None`
+- `attempt_id`: `str | None`
+- `turn_id`: `str | None`
+- `turn_execution_context`: `Any`
+- `on_turn_context`: `Callable[[Any], Any] | None`
+- `set_input_admission`: `Callable[[bool], None] | None`
+
+
+### AgentEndEvent {#agentendevent}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/types.py#L121)
+
+
+**Attributes**
+
+- `type`: `Literal['agent_end']`
+- `messages`: `list[Message]`
+
+
+### AgentEvent {#agentevent}
+
+_attribute_
+
+```python
+AgentEvent = AgentStartEvent | AgentEndEvent | TurnStartEvent | TurnEndEvent | MessageStartEvent | MessageUpdateEvent | MessageEndEvent | ToolExecutionStartEvent | ToolExecutionUpdateEvent | ToolExecutionEndEve...
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/types.py#L210)
+
+
+### AgentListener {#agentlistener}
+
+_attribute_
+
+```python
+AgentListener = Callable[[AgentEvent, asyncio.Event | None], Awaitable[None] | None]
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/types.py#L229)
+
+
+### AgentStartEvent {#agentstartevent}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/types.py#L117)
+
+
+**Attributes**
+
+- `type`: `Literal['agent_start']`
+
+
+### AgentTool {#agenttool}
+
+_class_
+
+```python
+AgentTool(
+    name: str,
+    description: str,
+    parameters: type[TParams],
+    execute: Callable[..., Awaitable[AgentToolResult]],
+    label: str = '',
+    execution_mode: Literal['sequential', 'parallel'] | None = None,
+    hitl_builtin: bool = False,
+    hitl: HitlBinding | None = None,
+    expose_to_model: bool = True,
+)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/types.py#L33)
+
+
+**Attributes**
+
+- `name`: `str`
+- `description`: `str`
+- `parameters`: `type[TParams]`
+- `execute`: `Callable[..., Awaitable[AgentToolResult]]`
+- `label`: `str`
+- `execution_mode`: `Literal['sequential', 'parallel'] | None`
+- `hitl_builtin`: `bool`
+- `hitl`: `HitlBinding | None`
+- `expose_to_model`: `bool`
+
+
+**Methods**
+
+#### `to_definition` {#agenttool-to-definition}
+
+```python
+to_definition() -> ToolDefinition
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/types.py#L47)
+
+
+
+### AgentToolResult {#agenttoolresult}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/types.py#L26)
+
+
+**Attributes**
+
+- `content`: `list[Content]`
+- `details`: `StructuredValue`
+- `is_error`: `bool | None`
+- `terminate`: `bool | None`
+
+
+### BeforeToolCallContext {#beforetoolcallcontext}
+
+_class_
+
+```python
+BeforeToolCallContext(
+    assistant_message: AssistantMessage,
+    tool_call: ToolCall,
+    args: BaseModel | JsonObject,
+    context: AgentContext,
+)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/types.py#L88)
+
+
+**Attributes**
+
+- `assistant_message`: `AssistantMessage`
+- `tool_call`: `ToolCall`
+- `args`: `BaseModel | JsonObject`
+- `context`: `AgentContext`
+
+
+### BeforeToolCallResult {#beforetoolcallresult}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/types.py#L73)
+
+
+**Attributes**
+
+- `block`: `bool`
+- `reason`: `str | None`
+- `edited_args`: `JsonObject | None`
+- `deny_reason`: `str | None`
+- `hitl_trace`: `StructuredObject | None`
+
+
+### MessageEndEvent {#messageendevent}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/types.py#L147)
+
+
+**Attributes**
+
+- `type`: `Literal['message_end']`
+- `message`: `Message`
+
+
+### MessageStartEvent {#messagestartevent}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/types.py#L136)
+
+
+**Attributes**
+
+- `type`: `Literal['message_start']`
+- `message`: `Message`
+
+
+### MessageUpdateEvent {#messageupdateevent}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/types.py#L141)
+
+
+**Attributes**
+
+- `type`: `Literal['message_update']`
+- `message`: `AssistantMessage`
+- `stream_event`: `StreamEvent`
+
+
+### ShouldStopAfterTurnContext {#shouldstopafterturncontext}
+
+_class_
+
+```python
+ShouldStopAfterTurnContext(
+    message: AssistantMessage,
+    tool_results: list[ToolResultMessage],
+    context: AgentContext,
+    new_messages: list[Message],
+)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/types.py#L106)
+
+
+**Attributes**
+
+- `message`: `AssistantMessage`
+- `tool_results`: `list[ToolResultMessage]`
+- `context`: `AgentContext`
+- `new_messages`: `list[Message]`
+
+
+### ToolExecutionEndEvent {#toolexecutionendevent}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/types.py#L167)
+
+
+**Attributes**
+
+- `type`: `Literal['tool_execution_end']`
+- `tool_call_id`: `str`
+- `tool_name`: `str`
+- `result`: `StructuredValue`
+- `is_error`: `bool`
+- `terminate`: `bool` — True iff the tool's AgentToolResult.terminate was True (or the after_tool_call hook set terminate=True). Recorders use this to mark the turn as terminated-by-tool without unwrapping `result`.
+- `blocked_by_hook`: `bool` — True iff the tool call was blocked by a `before_tool_call` hook returning `block=True`. Distinguishes hook-blocks from other immediate errors (tool-not-found, arg-validation failure).
+- `block_reason`: `str | None` — When `blocked_by_hook` is True, the reason string from `BeforeToolCallResult.reason` (or `None` if the hook supplied no reason).
+
+
+### ToolExecutionStartEvent {#toolexecutionstartevent}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/types.py#L152)
+
+
+**Attributes**
+
+- `type`: `Literal['tool_execution_start']`
+- `tool_call_id`: `str`
+- `tool_name`: `str`
+- `args`: `JsonObject`
+
+
+### ToolExecutionUpdateEvent {#toolexecutionupdateevent}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/types.py#L159)
+
+
+**Attributes**
+
+- `type`: `Literal['tool_execution_update']`
+- `tool_call_id`: `str`
+- `tool_name`: `str`
+- `args`: `JsonObject | None`
+- `partial_result`: `StructuredValue`
+
+
+### TurnEndEvent {#turnendevent}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/types.py#L130)
+
+
+**Attributes**
+
+- `type`: `Literal['turn_end']`
+- `message`: `AssistantMessage`
+- `tool_results`: `list[ToolResultMessage]`
+
+
+### TurnStartEvent {#turnstartevent}
+
+_class_
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/agent/types.py#L126)
+
+
+**Attributes**
+
+- `type`: `Literal['turn_start']`
+
+
+### emit_event {#emit-event}
+
+_function_
+
+```python
+emit_event(emit_fn: Callable, event: object) -> None
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/utils/emit.py#L7)
+
+
+
+<!-- GENERATED by build_api_reference.py — DO NOT EDIT -->

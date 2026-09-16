@@ -711,12 +711,12 @@ class Agent(Generic[TMessage]):
         agent still works.
         """
         try:
-            from opentelemetry import trace
+            from opentelemetry.trace import get_tracer
         except ImportError:
             from contextlib import nullcontext
 
             return nullcontext()
-        tracer = trace.get_tracer("cubeloop.agent")
+        tracer = get_tracer("cubeloop.agent")
         return tracer.start_as_current_span(
             "cubeloop.agent.fork_once",
             attributes={

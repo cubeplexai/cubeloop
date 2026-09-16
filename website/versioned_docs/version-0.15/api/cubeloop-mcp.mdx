@@ -1,0 +1,209 @@
+---
+id: cubeloop-mcp
+title: cubeloop.mcp
+sidebar_position: 6
+hide_table_of_contents: false
+---
+
+# `cubeloop.mcp`
+
+### load_mcp_tools_http {#load-mcp-tools-http}
+
+_function_
+
+```python
+load_mcp_tools_http(
+    server_url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    timeout: float = 30.0,
+    transport: Transport = 'sse',
+) -> MCPDiscoveryResult
+```
+
+Connect to an HTTP MCP server and discover its tools + metadata.
+
+Returns a [`MCPDiscoveryResult`](./cubeloop-mcp#mcpdiscoveryresult) carrying:
+
+- `tools` — executable `AgentTool` per `tools/list` entry.
+- `server` — `MCPServerInfo` (name, version, websiteUrl, icons)
+  captured from the `initialize` handshake's `serverInfo`. Sourced
+  from MCP spec rev 2025-11-25's `Implementation` shape.
+- `tool_infos` — per-tool display metadata (currently `icons`)
+  captured from each `tools/list` entry, separated from
+  `AgentTool` so callers can render visuals without coupling
+  core types to display concerns.
+
+`transport` picks the wire format:
+
+- `"sse"` (default) — legacy SSE-over-GET transport (`sse_client`).
+- `"streamable_http"` — newer SSE-over-POST transport
+  (`streamablehttp_client`).
+
+Each returned tool's execute method invokes `tools/call` against a
+fresh session — v1 simplicity, no pooling. The session is opened over
+the same transport that was used for discovery, so the call path
+cannot accidentally regress to the wrong wire format.
+
+The transport's own timeout bounds the connection; we additionally
+wrap initialize/list/call awaits in `asyncio.wait_for` so a server
+that accepts the connection but stalls on protocol messages still
+aborts.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/mcp/http_loader.py#L112)
+
+
+### load_mcp_tools_stdio {#load-mcp-tools-stdio}
+
+_function_
+
+```python
+load_mcp_tools_stdio(
+    command: str,
+    args: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    cwd: str | None = None,
+    timeout: float = 30.0,
+) -> MCPDiscoveryResult
+```
+
+Spawn a stdio MCP server subprocess and discover its tools + metadata.
+
+Returns a [`MCPDiscoveryResult`](./cubeloop-mcp#mcpdiscoveryresult) with the same shape as
+[`load_mcp_tools_http`](./cubeloop-mcp#load-mcp-tools-http): `tools` (executable AgentTools),
+`server` (Implementation info from `initialize`), and `tool_infos`
+(per-tool display metadata such as icons).
+
+Each returned tool's execute opens a fresh subprocess per call (v1
+simplicity, no process pooling).
+
+
+**Args**
+
+- `command` — executable to run (e.g. "npx" or sys.executable)
+- `args` — argv for the server process
+- `env` — environment variables (passed to subprocess)
+- `cwd` — working directory for the subprocess
+- `timeout` — per-call wall-clock timeout for initialize/list/call awaits.
+        A hung server raises asyncio.TimeoutError instead of blocking forever.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/mcp/stdio_loader.py#L16)
+
+
+### MCPDiscoveryResult {#mcpdiscoveryresult}
+
+_class_
+
+```python
+MCPDiscoveryResult(
+    tools: list[AgentTool],
+    server: MCPServerInfo | None = None,
+    tool_infos: list[MCPToolInfo] = list(),
+)
+```
+
+Outcome of an MCP discovery handshake.
+
+`tools` is the executable surface (one `AgentTool` per tool the
+server exposes). `server` and `tool_infos` are display metadata
+captured from the same handshake; both follow MCP spec rev 2025-11-25.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/mcp/types.py#L56)
+
+
+**Attributes**
+
+- `tools`: `list[AgentTool]`
+- `server`: `MCPServerInfo | None`
+- `tool_infos`: `list[MCPToolInfo]`
+
+
+### MCPIcon {#mcpicon}
+
+_class_
+
+```python
+MCPIcon(
+    src: str,
+    mime_type: str | None = None,
+    sizes: tuple[str, ...] | None = None,
+    theme: str | None = None,
+)
+```
+
+One icon entry from an MCP `Icon` block.
+
+Mirrors `mcp.types.Icon` with snake_case fields. `src` is either an
+HTTP/HTTPS URL or a `data:` URI; `sizes` is a tuple of strings such
+as `("48x48", "96x96")`. `theme` is `"light"` or `"dark"` when
+the server supplies separate variants — the spec lets clients pick the
+variant matching the current UI theme and fall back to the first entry
+otherwise.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/mcp/types.py#L10)
+
+
+**Attributes**
+
+- `src`: `str`
+- `mime_type`: `str | None`
+- `sizes`: `tuple[str, ...] | None`
+- `theme`: `str | None`
+
+
+### MCPServerInfo {#mcpserverinfo}
+
+_class_
+
+```python
+MCPServerInfo(
+    name: str,
+    version: str,
+    website_url: str | None = None,
+    icons: tuple[MCPIcon, ...] = (),
+)
+```
+
+Server-level metadata captured from the `initialize` handshake.
+
+Sourced from `InitializeResult.serverInfo` (an `Implementation`):
+the server's display name + version, an optional website URL, and an
+optional list of icons that clients can render as the server's logo.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/mcp/types.py#L28)
+
+
+**Attributes**
+
+- `name`: `str`
+- `version`: `str`
+- `website_url`: `str | None`
+- `icons`: `tuple[MCPIcon, ...]`
+
+
+### MCPToolInfo {#mcptoolinfo}
+
+_class_
+
+```python
+MCPToolInfo(name: str, icons: tuple[MCPIcon, ...] = ())
+```
+
+Per-tool display metadata captured from `tools/list`.
+
+Carries `Tool.icons` separately from the executable `AgentTool` so
+consumers can render tool-specific icons without coupling cubepi's
+core `AgentTool` type to MCP display concerns.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/mcp/types.py#L43)
+
+
+**Attributes**
+
+- `name`: `str`
+- `icons`: `tuple[MCPIcon, ...]`
+
+
+
+<!-- GENERATED by build_api_reference.py — DO NOT EDIT -->
