@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`ToolResultLimitMiddleware` caps tool-result text in `after_tool_call`.**
+  Oversized text is truncated to `max_chars` (default 20,000) with a notice
+  telling the model to narrow the call. The rewrite happens before
+  `ToolExecutionEndEvent`, so the model, checkpointer, and host consumers
+  all see the truncated result. Image blocks are kept; tools in
+  `exclude_tool_names` pass through.
+
 ## [0.15.0] - 2026-09-16
 
 ### Added
