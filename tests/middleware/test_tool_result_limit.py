@@ -83,6 +83,32 @@ class TestTruncateToolResultContent:
         assert out[1].text.startswith("xxxx")
         assert "[truncated:" in out[1].text
 
+    def test_drops_text_blocks_after_budget_is_exhausted(self) -> None:
+        content = [
+            TextContent(text="aaaa"),
+            TextContent(text="dropped"),
+        ]
+        out = truncate_tool_result_content(content, max_chars=4)
+        assert out is not None
+        texts = [b.text for b in out if isinstance(b, TextContent)]
+        assert len(texts) == 1
+        assert texts[0].startswith("aaaa")
+        assert "dropped" not in texts[0]
+        assert "[truncated:" in texts[0]
+
+    def test_appends_notice_when_last_kept_block_is_not_text(self) -> None:
+        content = [
+            TextContent(text="abcdefghij"),
+            ImageContent(source="data:image/png;base64,xx", media_type="image/png"),
+        ]
+        out = truncate_tool_result_content(content, max_chars=4)
+        assert out is not None
+        assert isinstance(out[0], TextContent)
+        assert out[0].text == "abcd"
+        assert isinstance(out[1], ImageContent)
+        assert isinstance(out[2], TextContent)
+        assert out[2].text.startswith("[truncated:")
+
 
 class TestToolResultLimitMiddleware:
     def test_rejects_non_positive_max_chars(self) -> None:
