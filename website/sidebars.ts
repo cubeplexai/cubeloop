@@ -45,6 +45,7 @@ const sidebars: SidebarsConfig = {
           'guides/middleware/compaction',
           'guides/middleware/subagents',
           'guides/middleware/todo',
+          'guides/middleware/tool-result-limit',
           'guides/middleware/deferred-tools',
           'guides/middleware/goal',
           'guides/middleware/examples',

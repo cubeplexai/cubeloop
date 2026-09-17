@@ -171,6 +171,26 @@ class SummaryInjector(Middleware):
         return f"{system_prompt}\n\nContext: {summary}".strip()
 ```
 
+## Built-in tool-result cap
+
+`ToolResultLimitMiddleware` truncates oversized tool-result text in
+`after_tool_call` so a runaway `execute` / fetch / MCP payload cannot
+blow the next model call (or a host event-size budget).
+
+```python
+from cubeloop.middleware import ToolResultLimitMiddleware
+
+agent = Agent(
+    model=…,
+    middleware=[
+        ToolResultLimitMiddleware(max_chars=20_000),
+    ],
+)
+```
+
+See [Tool Result Limit](./tool-result-limit.md) for options, exclusions,
+and placement.
+
 ## Built-in compaction
 
 `CompactionMiddleware` summarizes older turns into `ctx.extra` and
