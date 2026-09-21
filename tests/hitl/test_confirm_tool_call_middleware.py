@@ -30,7 +30,9 @@ async def test_set_based_require_confirm_only_asks_for_listed():
     asyncio.create_task(host())
     mw = ConfirmToolCallMiddleware(ch, require_confirm={"bash"})
     # bash: prompts
-    assert (await mw.before_tool_call(_ctx("bash"))) is None
+    result = await mw.before_tool_call(_ctx("bash"))
+    assert result is not None and not result.block
+    assert result.hitl_trace == {"decision": "human_approve"}
     # read_file: not in set — passes through silently
     assert (await mw.before_tool_call(_ctx("read_file"))) is None
     # bash prompted exactly once; read_file did not engage channel
@@ -51,7 +53,9 @@ async def test_predicate_require_confirm():
         return ctx.tool_call.name.startswith("dangerous_")
 
     mw = ConfirmToolCallMiddleware(ch, require_confirm=needs_confirm)
-    assert (await mw.before_tool_call(_ctx("dangerous_op"))) is None
+    result = await mw.before_tool_call(_ctx("dangerous_op"))
+    assert result is not None and not result.block
+    assert result.hitl_trace == {"decision": "human_approve"}
 
 
 async def test_default_none_asks_for_every_tool():
@@ -64,4 +68,6 @@ async def test_default_none_asks_for_every_tool():
 
     asyncio.create_task(host())
     mw = ConfirmToolCallMiddleware(ch)  # no require_confirm
-    assert (await mw.before_tool_call(_ctx("anything"))) is None
+    result = await mw.before_tool_call(_ctx("anything"))
+    assert result is not None and not result.block
+    assert result.hitl_trace == {"decision": "human_approve"}

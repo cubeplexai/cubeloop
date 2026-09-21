@@ -95,7 +95,7 @@ class ApprovalPolicyMiddleware(Middleware):
             )
 
         if answer.decision == "approve":
-            return None
+            return BeforeToolCallResult(hitl_trace={"decision": "human_approve"})
         if answer.decision == "deny":
             return BeforeToolCallResult(
                 block=True,

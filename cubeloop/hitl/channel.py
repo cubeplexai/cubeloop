@@ -231,6 +231,7 @@ class _BaseChannel:
                 ):
                     _, ans = self._resume_slot
                     self._resume_slot = None
+                    ans = _normalize_answer(payload, ans)
                     from_resume = True
                     outcome = _outcome_from_answer(kind, ans)
                     if self._emit is not None:

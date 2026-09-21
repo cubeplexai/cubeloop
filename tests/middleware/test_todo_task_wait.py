@@ -5,12 +5,14 @@ import json
 from typing import Any
 
 import pytest
+from pydantic import BaseModel
 
 from cubeloop import Agent
-from cubeloop.agent.types import AgentContext
+from cubeloop.agent.types import AgentContext, AgentTool, AgentToolResult
 from cubeloop.checkpointer.memory import MemoryCheckpointer
 from cubeloop.hitl.ask_user import ask_user_tool
 from cubeloop.hitl.channel import CheckpointedChannel
+from cubeloop.hitl.middleware import ConfirmToolCallMiddleware
 from cubeloop.middleware.base import Middleware, TurnAction
 from cubeloop.middleware.todo import (
     TaskWaitBinding,
@@ -466,9 +468,19 @@ async def test_wait_state_does_not_change_system_prompt_prefix() -> None:
     assert await mw.transform_system_prompt("base", ctx=ctx) == before
 
 
-@pytest.mark.parametrize("same_turn", [False, True])
+@pytest.mark.parametrize(
+    ("same_turn", "answer_kind"),
+    [
+        (False, "ask"),
+        (True, "ask"),
+        (False, "approve"),
+        (False, "deny"),
+        (False, "edit"),
+    ],
+)
 async def test_valid_task_wait_does_not_complete_a_pending_hitl_request(
     same_turn: bool,
+    answer_kind: str,
 ) -> None:
     storage = MemoryCheckpointer()
     channel = CheckpointedChannel(
@@ -478,6 +490,18 @@ async def test_valid_task_wait_does_not_complete_a_pending_hitl_request(
     ask = faux_tool_call(
         "ask_user", {"questions": [{"key": "continue", "prompt": "Continue?"}]}
     )
+
+    class ActionParams(BaseModel):
+        command: str
+
+    executed: list[str] = []
+
+    async def action(tool_call_id, params, *, signal=None, on_update=None):
+        executed.append(params.command)
+        return AgentToolResult(content=[TextContent(text="Executed.")])
+
+    if answer_kind != "ask":
+        ask = faux_tool_call("action", {"command": "original"})
     provider.set_responses(
         [faux_assistant_message([*waiting_call().content, ask])]
         if same_turn
@@ -488,8 +512,19 @@ async def test_valid_task_wait_does_not_complete_a_pending_hitl_request(
     )
     agent = Agent(
         model=provider.model("faux"),
-        tools=[ask_user_tool(channel)],
-        middleware=[todo],
+        tools=[
+            ask_user_tool(channel),
+            AgentTool(
+                name="action",
+                description="Act",
+                parameters=ActionParams,
+                execute=action,
+            ),
+        ],
+        middleware=[
+            todo,
+            ConfirmToolCallMiddleware(channel, require_confirm=["action"]),
+        ],
         checkpointer=storage,
         channel=channel,
         thread_id="task-wait",
@@ -535,13 +570,35 @@ async def test_valid_task_wait_does_not_complete_a_pending_hitl_request(
             run_id="run-a",
             attempt_id="attempt-b",
             question_id=result.pending_request.question_id,
-            answer={"continue": "yes"},
+            answer=(
+                {"continue": "yes"}
+                if answer_kind == "ask"
+                else {"decision": answer_kind, "edited_args": {"command": "edited"}}
+            ),
         )
     )
     assert resumed.outcome == "completed"
     checkpoint = await storage.load("task-wait")
+    if answer_kind != "ask":
+        assert checkpoint is not None
+        result_message = next(
+            m
+            for m in checkpoint.messages
+            if isinstance(m, ToolResultMessage) and m.tool_name == "action"
+        )
+        assert (
+            isinstance(result_message.details, dict)
+            and "hitl" in result_message.details
+        ), result_message
     assert checkpoint is not None and checkpoint.extra["todo_task_wait"] is None
     assert checkpoint.extra["todos"][0]["status"] == "completed"
+    assert executed == (
+        ["original"]
+        if answer_kind == "approve"
+        else ["edited"]
+        if answer_kind == "edit"
+        else []
+    )
 
 
 async def test_wait_binding_is_checkpointed_before_the_next_model_call() -> None:

@@ -14,7 +14,7 @@ Extra must be saved at completed tool-turn boundaries before the next model call
 
 Before the existing unfinished-Todo pure-text guard forces another model call, revalidate the declaration. `valid` allows natural completion while leaving unfinished items unchanged. `cancelled` does the same only for an existing, still-bound successful declaration, and stores the user's cancellation reason. It never permits creation of a new declaration. Invalid IDs, missing authority, validation failures, changed input, or an unconfigured validator retain the normal guard.
 
-HITL answers are new input too. Their structured tool-result evidence invalidates an earlier wait even when resuming the same run; the model must handle the answer before declaring a new wait.
+HITL answers are new input too. Their structured tool-result evidence invalidates an earlier wait even when resuming the same run; the model must handle the answer before declaring a new wait. Human approval records evidence just like denial and editing; automatic policy approval is not new human input. JSON answers restored through the resume slot use the same typed normalization as checkpoint-loaded answers.
 
 This exemption cannot bypass malformed Todo input, parallel write restrictions, explicit stop, HITL, or another middleware's stop decision. It emits no notification, starts no run, and does not modify historical messages or a dynamic system prompt prefix.
 
