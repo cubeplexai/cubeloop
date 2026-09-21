@@ -117,8 +117,9 @@ input boundary. Before forcing a finalization correction, CubeLoop asks the
 host again. A valid wait lets the run end naturally without completing unfinished
 Todos or making another model call. An ordinary Todo update without task IDs
 clears the declaration. New user or internal input, including a new run's initial
-message or a HITL answer, invalidates it. A changed or unprovable boundary after compaction also
-requires a new declaration.
+message or a HITL answer (including approval, denial, or editing of a tool call),
+invalidates it. Automatic policy approval is not new human input. A changed or
+unprovable boundary after compaction also requires a new declaration.
 
 If the user cancels previously validated work, the callback may return
 `status="cancelled"` with a nonempty `reason`, after proving cancellation happened

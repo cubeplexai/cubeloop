@@ -49,7 +49,8 @@ async def test_ask_user_policy_invokes_channel_human_approve():
     asyncio.create_task(host())
     mw = ApprovalPolicyMiddleware(ch, policy=lambda c: AskUser())
     result = await mw.before_tool_call(_ctx())
-    assert result is None
+    assert result is not None and not result.block
+    assert result.hitl_trace == {"decision": "human_approve"}
 
 
 async def test_ask_user_policy_human_deny_blocks():
