@@ -27,7 +27,11 @@ from cubeloop.providers.base import (
     synthetic_user_message,
 )
 from cubeloop.providers.faux import FauxProvider, faux_assistant_message, faux_tool_call
-from cubeloop.session import InputEnvelope, PromptExecutionRequest
+from cubeloop.session import (
+    InputEnvelope,
+    PromptExecutionRequest,
+    RespondExecutionRequest,
+)
 
 TODOS = [{"content": "Wait for build result", "status": "in_progress"}]
 
@@ -517,6 +521,27 @@ async def test_valid_task_wait_does_not_complete_a_pending_hitl_request(
     assert checkpoint is not None and checkpoint.extra["todos"] == TODOS
     assert checkpoint.extra["todo_task_wait_outcome"] is None
     assert await storage.load_pending("task-wait") is not None
+    provider.set_responses(
+        [
+            faux_assistant_message(
+                "The answer needs to be handled before waiting again."
+            ),
+            complete_call(),
+            faux_assistant_message("Done."),
+        ]
+    )
+    resumed = await agent.session.execute(
+        RespondExecutionRequest(
+            run_id="run-a",
+            attempt_id="attempt-b",
+            question_id=result.pending_request.question_id,
+            answer={"continue": "yes"},
+        )
+    )
+    assert resumed.outcome == "completed"
+    checkpoint = await storage.load("task-wait")
+    assert checkpoint is not None and checkpoint.extra["todo_task_wait"] is None
+    assert checkpoint.extra["todos"][0]["status"] == "completed"
 
 
 async def test_wait_binding_is_checkpointed_before_the_next_model_call() -> None:

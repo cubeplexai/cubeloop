@@ -48,6 +48,7 @@ from cubeloop.providers.base import (
     Message,
     TextContent,
     ToolCall,
+    ToolResultMessage,
     UserMessage,
     is_synthetic_message,
 )
@@ -311,6 +312,11 @@ def _input_boundary(ctx: AgentContext) -> str:
         for message in ctx.messages
         if (isinstance(message, UserMessage) and not is_synthetic_message(message))
         or isinstance(message.metadata.get("input_id"), str)
+        or (
+            isinstance(message, ToolResultMessage)
+            and isinstance(message.details, dict)
+            and "hitl" in message.details
+        )
     ]
     return hashlib.sha256(
         json.dumps(
