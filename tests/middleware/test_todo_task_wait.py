@@ -217,8 +217,6 @@ async def test_successful_update_without_wait_clears_previous_declaration() -> N
 
 @pytest.mark.parametrize("kind", ["user", "background"])
 async def test_committed_live_input_invalidates_wait(kind: str) -> None:
-    import asyncio
-
     entered, release = asyncio.Event(), asyncio.Event()
 
     async def waiting_response(messages: Any, model: Any) -> AssistantMessage:

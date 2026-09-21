@@ -1,8 +1,15 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from cubeloop.middleware.base import Middleware, TurnAction, compose_middleware
+
+if TYPE_CHECKING:
+    from cubeloop.middleware.todo import (
+        TaskWaitBinding,
+        TaskWaitValidation,
+        TaskWaitValidator,
+    )
 
 __all__ = [
     "CompactionMiddleware",
