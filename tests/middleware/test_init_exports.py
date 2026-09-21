@@ -11,6 +11,8 @@ def test_lazy_exports_resolve_builtin_middleware() -> None:
     assert middleware.SubagentMiddleware.__name__ == "SubagentMiddleware"
     assert middleware.SubagentSpec.__name__ == "SubagentSpec"
     assert middleware.ToolResultLimitMiddleware.__name__ == "ToolResultLimitMiddleware"
+    assert middleware.TaskWaitBinding.__name__ == "TaskWaitBinding"
+    assert middleware.TaskWaitValidation.__name__ == "TaskWaitValidation"
 
 
 def test_unknown_lazy_export_raises_attribute_error() -> None:
