@@ -1386,8 +1386,16 @@ class Agent(Generic[TMessage]):
                 self._state.error_message = msg.error_message
         elif event.type == "agent_end":
             self._state.streaming_message = None
+
+        if event.type in ("agent_end", "agent_suspended") or (
+            event.type == "turn_end" and event.tool_results
+        ):
             if self.checkpointer and self.thread_id:
-                await self.checkpointer.save_extra(self.thread_id, self._extra)
+                try:
+                    await self.checkpointer.save_extra(self.thread_id, self._extra)
+                except BaseException:
+                    self.session._mark_checkpoint_write_failure()
+                    raise
 
         await self.session._publish_agent_event(event)
         await self._emit_to_listeners(event)

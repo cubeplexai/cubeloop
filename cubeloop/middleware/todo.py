@@ -24,8 +24,10 @@ AssistantMessage / ToolResultMessage types directly.
 from __future__ import annotations
 
 import asyncio
+import copy
+import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal, TypeAlias, cast
 
 from typing_extensions import TypedDict
@@ -36,6 +38,8 @@ from cubeloop.agent.types import (
     AgentContext,
     AgentTool,
     AgentToolResult,
+    BeforeToolCallContext,
+    BeforeToolCallResult,
 )
 from cubeloop.middleware.base import Middleware, TurnAction
 from cubeloop.providers.base import (
@@ -45,9 +49,10 @@ from cubeloop.providers.base import (
     TextContent,
     ToolCall,
     UserMessage,
+    is_synthetic_message,
 )
-from cubeloop.types import StructuredValue
-from pydantic import BaseModel
+from cubeloop.types import JsonObject, StructuredValue
+from pydantic import BaseModel, Field, ValidationError
 
 # ---------------------------------------------------------------------------
 # Tool description + system prompt (provider-neutral constants).
@@ -112,6 +117,14 @@ It is important to skip using this tool when:
 
 Being proactive with task management demonstrates attentiveness and ensures you complete all requirements successfully
 Remember: If you only need to make a few tool calls to complete a task, and it is clear what you need to do, it is better to just do the task directly and NOT call this tool at all."""  # noqa: E501
+
+WRITE_TODOS_TOOL_DESCRIPTION += """
+
+If your host supports background task waiting and returns task IDs, you may include
+wait_for_tasks when the remaining work depends on those tasks. Keep unfinished
+todos unfinished. The host must validate the task IDs; this declaration does not
+start tasks or keep this run alive. Omit it for ordinary checklist updates.
+"""
 
 WRITE_TODOS_SYSTEM_PROMPT = """## `write_todos`
 
@@ -263,6 +276,55 @@ class WriteTodosInput(BaseModel):
     """Input schema for the ``write_todos`` tool."""
 
     todos: list[Todo]
+    wait_for_tasks: list[str] = Field(
+        default_factory=list,
+        description="Background task IDs to await, only with host validation enabled.",
+    )
+
+
+class TaskWaitBinding(BaseModel):
+    """A successful host check bound to the checklist and committed input boundary."""
+
+    task_ids: list[str]
+    todos: list[Todo]
+    run_id: str | None
+    input_boundary: str
+    validation: JsonObject = Field(default_factory=dict)
+
+
+class TaskWaitValidation(BaseModel):
+    """Host evidence; cancelled is only meaningful for a prior successful binding."""
+
+    status: Literal["valid", "cancelled", "invalid"]
+    reason: str = ""
+    validation: JsonObject = Field(default_factory=dict)
+
+
+TaskWaitValidator: TypeAlias = Callable[
+    [list[str], AgentContext, TaskWaitBinding | None], Awaitable[TaskWaitValidation]
+]
+
+
+def _input_boundary(ctx: AgentContext) -> str:
+    inputs = [
+        message
+        for message in ctx.messages
+        if (isinstance(message, UserMessage) and not is_synthetic_message(message))
+        or isinstance(message.metadata.get("input_id"), str)
+    ]
+    return hashlib.sha256(
+        json.dumps(
+            [len(inputs), inputs[-1].model_dump(mode="json") if inputs else None],
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+
+def _clear_task_wait(extra: dict[str, Any]) -> None:
+    # Save an explicit null: checkpointers may merge extra rather than replace it.
+    extra["todo_task_wait"] = None
+    extra["todo_task_wait_outcome"] = None
 
 
 # ---------------------------------------------------------------------------
@@ -371,6 +433,8 @@ def _make_user_message(text: str, *, source: str) -> UserMessage:
 def _make_write_todos_tool(
     extra_ref: Callable[[], dict[str, Any]],
     description: str = WRITE_TODOS_TOOL_DESCRIPTION,
+    prepare_wait: Callable[[str, WriteTodosInput], Awaitable[TaskWaitBinding | str]]
+    | None = None,
 ) -> AgentTool[WriteTodosInput]:
     """Build the ``write_todos`` AgentTool that stores results in extra.
 
@@ -388,7 +452,7 @@ def _make_write_todos_tool(
         signal: asyncio.Event | None = None,
         on_update: Callable[[StructuredValue], None] | None = None,
     ) -> AgentToolResult:
-        del signal, on_update  # unused
+        del on_update  # unused
         todos = args.todos
 
         # Build a dict in the format _validated_write_todos_payload expects
@@ -423,10 +487,31 @@ def _make_write_todos_tool(
                 is_error=True,
             )
 
-        extra_ref()["todos"] = validated_todos
+        binding: TaskWaitBinding | None = None
+        if args.wait_for_tasks:
+            prepared = (
+                await prepare_wait(tool_call_id, args)
+                if prepare_wait is not None
+                else "Error: Task waiting is not configured by the host."
+            )
+            if signal is not None and signal.is_set():
+                raise asyncio.CancelledError()
+            if isinstance(prepared, str):
+                return AgentToolResult(
+                    content=[TextContent(text=prepared)], is_error=True
+                )
+            binding = prepared
+
+        extra = extra_ref()
+        extra["todos"] = validated_todos
+        _clear_task_wait(extra)
+        if binding is not None:
+            extra["todo_task_wait"] = binding.model_dump(mode="json")
 
         # Build the JSON content identical to _build_todo_tool_message
         payload: dict[str, Any] = {"todos": validated_todos}
+        if binding is not None:
+            payload["wait_for_tasks"] = binding.task_ids
         if len(validated_todos) >= 3 and all(
             todo["status"] == "completed" for todo in validated_todos
         ):
@@ -491,6 +576,7 @@ class TodoListMiddleware(Middleware):
         extra_ref: Callable[[], dict[str, Any]],
         system_prompt: str = WRITE_TODOS_SYSTEM_PROMPT,
         tool_description: str = WRITE_TODOS_TOOL_DESCRIPTION,
+        validate_task_wait: TaskWaitValidator | None = None,
     ) -> None:
         # extra_ref must return the agent's persisted extra dict (i.e. the same
         # object as AgentContext.extra) so that todo state survives session
@@ -499,7 +585,108 @@ class TodoListMiddleware(Middleware):
         self._extra_ref = extra_ref
         self._system_prompt = system_prompt
         self._tool_description = tool_description
-        self.tools = [_make_write_todos_tool(self._extra_ref, self._tool_description)]
+        self._validate_task_wait = validate_task_wait
+        self._tool_contexts: dict[str, AgentContext] = {}
+        self.tools = [
+            _make_write_todos_tool(
+                self._extra_ref, self._tool_description, self._prepare_task_wait
+            )
+        ]
+
+    async def before_tool_call(
+        self,
+        ctx: BeforeToolCallContext,
+        *,
+        signal: asyncio.Event | None = None,
+    ) -> BeforeToolCallResult | None:
+        if ctx.tool_call.name == "write_todos":
+            self._tool_contexts[ctx.tool_call.id] = ctx.context
+        return None
+
+    async def _prepare_task_wait(
+        self, tool_call_id: str, args: WriteTodosInput
+    ) -> TaskWaitBinding | str:
+        ctx = self._tool_contexts.pop(tool_call_id, None)
+        if self._validate_task_wait is None:
+            return "Error: Task waiting is not configured by the host."
+        if ctx is None or ctx.extra is not self._extra_ref():
+            return "Error: Task waiting requires the live tool context."
+        ids = args.wait_for_tasks
+        if any(not value.strip() for value in ids) or len(ids) != len(set(ids)):
+            return "Error: wait_for_tasks must contain distinct nonempty task IDs."
+        if not _unfinished_todos(args.todos):
+            return "Error: Task waiting requires unfinished todo items."
+        boundary, run_id = _input_boundary(ctx), ctx.run_id
+        try:
+            validation = await self._validate_task_wait(list(ids), ctx, None)
+            if validation.status != "valid":
+                return f"Error: Task wait was not validated. {validation.reason}"
+            if boundary != _input_boundary(ctx) or run_id != ctx.run_id:
+                return "Error: Input changed while task waiting was being validated."
+            return TaskWaitBinding(
+                task_ids=list(ids),
+                todos=copy.deepcopy(args.todos),
+                run_id=run_id,
+                input_boundary=boundary,
+                validation=copy.deepcopy(validation.validation),
+            )
+        except Exception:
+            return "Error: The host could not validate task waiting."
+
+    def _bound_task_wait(self, ctx: AgentContext) -> TaskWaitBinding | None:
+        extra = self._extra_ref()
+        raw = extra.get("todo_task_wait")
+        if raw is None:
+            return None
+        try:
+            binding = TaskWaitBinding.model_validate(raw)
+        except ValidationError:
+            _clear_task_wait(extra)
+            return None
+        if (
+            not binding.task_ids
+            or any(not task_id.strip() for task_id in binding.task_ids)
+            or len(binding.task_ids) != len(set(binding.task_ids))
+            or binding.run_id != ctx.run_id
+            or binding.todos != extra.get("todos")
+            or binding.input_boundary != _input_boundary(ctx)
+        ):
+            _clear_task_wait(extra)
+            return None
+        return binding
+
+    async def _task_wait_allows_finalization(
+        self, ctx: AgentContext, signal: asyncio.Event | None
+    ) -> bool:
+        binding = self._bound_task_wait(ctx)
+        if binding is None or self._validate_task_wait is None:
+            return False
+        try:
+            result = await self._validate_task_wait(
+                list(binding.task_ids), ctx, binding.model_copy(deep=True)
+            )
+            if result.status not in ("valid", "cancelled"):
+                return False
+            if result.status == "cancelled" and not result.reason.strip():
+                return False
+        except Exception:
+            return False
+        finally:
+            # The new host await must not convert an explicit Stop to completion.
+            if signal is not None and signal.is_set():
+                raise asyncio.CancelledError()
+        # A callback can await while another input is committed. Recheck after it.
+        if self._bound_task_wait(ctx) != binding:
+            return False
+        extra = self._extra_ref()
+        extra["todo_task_wait_outcome"] = {
+            "status": result.status,
+            "reason": result.reason,
+        }
+        extra["todo_guard_retries"] = _reset_guard_retries()
+        extra["todo_stale_iterations"] = 0
+        extra["todo_finalization_correction"] = None
+        return True
 
     # ------------------------------------------------------------------
     # transform_system_prompt
@@ -581,6 +768,10 @@ class TodoListMiddleware(Middleware):
         # Use get (not pop) so the snapshot remains available for every
         # duplicate call's after_tool_call invocation.
         extra["todos"] = extra.get("_todos_snapshot", extra.get("todos"))
+        extra["todo_task_wait"] = copy.deepcopy(extra.get("_todo_wait_snapshot"))
+        extra["todo_task_wait_outcome"] = copy.deepcopy(
+            extra.get("_todo_wait_outcome_snapshot")
+        )
         return AfterToolCallResult(
             content=[
                 TextContent(
@@ -663,8 +854,9 @@ class TodoListMiddleware(Middleware):
         stale-iteration state stored in ``extra``, and returns a
         ``TurnAction`` when the loop needs an injected nudge or hard stop.
         """
-        del signal  # not used
         extra = self._extra_ref()
+        self._tool_contexts.clear()
+        self._bound_task_wait(ctx)
 
         # We need the full message list from context to inspect the last AI msg.
         # In cubepi, ctx is AgentContext which has a .messages list.
@@ -716,6 +908,10 @@ class TodoListMiddleware(Middleware):
             # decision="natural": cubepi defers inject_messages until after
             # ToolResultMessages, keeping Anthropic-style ordering intact.
             extra["_todos_snapshot"] = extra.get("todos")
+            extra["_todo_wait_snapshot"] = copy.deepcopy(extra.get("todo_task_wait"))
+            extra["_todo_wait_outcome_snapshot"] = copy.deepcopy(
+                extra.get("todo_task_wait_outcome")
+            )
             return TurnAction(inject_messages=cast("list[Any]", parallel_errors))
 
         validation_errors = _todo_validation_errors_local(
@@ -723,6 +919,7 @@ class TodoListMiddleware(Middleware):
             extra.get("todos"),
         )
         if validation_errors:
+            _clear_task_wait(extra)
             inject: list[Any] = [
                 _make_user_message(e["error"], source="todo_validation_error")
                 for e in validation_errors
@@ -762,6 +959,8 @@ class TodoListMiddleware(Middleware):
         # NOTE: _guard_response reads extra["todo_guard_retries"] directly, so
         # we must call it BEFORE resetting retries in the clean-pass section below.
         if unfinished and _pure_text_assistant_response(last_assistant_msg):
+            if await self._task_wait_allows_finalization(ctx, signal):
+                return None
             return self._guard_response(extra, "finalization")
 
         # --- clean pass: commit deferred state updates ----------------------
