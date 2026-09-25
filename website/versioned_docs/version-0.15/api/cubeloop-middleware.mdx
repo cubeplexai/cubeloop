@@ -215,6 +215,52 @@ compose_middleware(middlewares: list[Middleware]) -> dict[str, Callable]
 [source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/base.py#L145)
 
 
+### TaskWaitBinding {#taskwaitbinding}
+
+_class_
+
+A successful host check bound to the checklist and committed input boundary.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L286)
+
+
+**Attributes**
+
+- `task_ids`: `list[str]`
+- `todos`: `list[Todo]`
+- `run_id`: `str | None`
+- `input_boundary`: `str`
+- `validation`: `JsonObject`
+
+
+### TaskWaitValidation {#taskwaitvalidation}
+
+_class_
+
+Host evidence; cancelled is only meaningful for a prior successful binding.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L296)
+
+
+**Attributes**
+
+- `status`: `Literal['valid', 'cancelled', 'invalid']`
+- `reason`: `str`
+- `validation`: `JsonObject`
+
+
+### TaskWaitValidator {#taskwaitvalidator}
+
+_attribute_
+
+```python
+TaskWaitValidator: TypeAlias = Callable[[list[str], AgentContext, TaskWaitBinding | None], Awaitable[TaskWaitValidation]]
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L304)
+
+
 ### CompactionMiddleware {#compactionmiddleware}
 
 _class_
@@ -347,6 +393,51 @@ on_run_end(
 
 
 
+### ToolResultLimitMiddleware {#toolresultlimitmiddleware}
+
+_class_
+
+```python
+ToolResultLimitMiddleware(
+    *,
+    max_chars: int = DEFAULT_MAX_TOOL_RESULT_CHARS,
+    exclude_tool_names: Collection[str] = (),
+)
+```
+
+Rewrite oversized tool results in `after_tool_call`.
+
+Place this after other `after_tool_call` middleware so the truncated
+content is what later composition and `ToolExecutionEndEvent` see.
+Under the default last-non-None composer, a later middleware that
+returns a result without `content` will drop this rewrite — put this
+last, or use a merging composer.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/tool_result_limit.py#L67)
+
+
+**Attributes**
+
+- `max_chars`
+- `exclude_tool_names`
+
+
+**Methods**
+
+#### `after_tool_call` {#toolresultlimitmiddleware-after-tool-call}
+
+```python
+after_tool_call(
+    ctx: AfterToolCallContext,
+    *,
+    signal: asyncio.Event | None = None,
+) -> AfterToolCallResult | None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/tool_result_limit.py#L88)
+
+
+
 ### SubagentMiddleware {#subagentmiddleware}
 
 _class_
@@ -454,7 +545,7 @@ _class_
 
 A single todo item with content and status.
 
-[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L132)
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L146)
 
 
 **Attributes**
@@ -469,7 +560,7 @@ _class_
 
 A guard escalation payload carried across the forced end turn.
 
-[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L149)
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L163)
 
 
 **Attributes**
@@ -521,6 +612,7 @@ TodoListMiddleware(
     extra_ref: Callable[[], dict[str, Any]],
     system_prompt: str = WRITE_TODOS_SYSTEM_PROMPT,
     tool_description: str = WRITE_TODOS_TOOL_DESCRIPTION,
+    validate_task_wait: TaskWaitValidator | None = None,
 )
 ```
 
@@ -544,7 +636,7 @@ Hooks:
     * finalization hard guard → loop_to_model with correction message
     * otherwise → return None (natural flow)
 
-[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L466)
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L557)
 
 
 **Attributes**
@@ -553,6 +645,19 @@ Hooks:
 
 
 **Methods**
+
+#### `before_tool_call` {#todolistmiddleware-before-tool-call}
+
+```python
+before_tool_call(
+    ctx: BeforeToolCallContext,
+    *,
+    signal: asyncio.Event | None = None,
+) -> BeforeToolCallResult | None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L602)
+
 
 #### `transform_system_prompt` {#todolistmiddleware-transform-system-prompt}
 
@@ -567,7 +672,7 @@ transform_system_prompt(
 
 Append the write_todos system instructions.
 
-[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L508)
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L701)
 
 
 #### `transform_context` {#todolistmiddleware-transform-context}
@@ -589,7 +694,7 @@ context to ensure the model always sees the current todo list.
 
 When no todos are set, messages are returned unchanged (no injection).
 
-[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L523)
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L716)
 
 
 #### `after_tool_call` {#todolistmiddleware-after-tool-call}
@@ -612,7 +717,7 @@ in extra["_todos_snapshot"].  Each duplicate write_todos call's result is
 replaced with an error here, and extra["todos"] is restored to the snapshot
 so the turn leaves the checklist unchanged.
 
-[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L557)
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L750)
 
 
 #### `after_model_response` {#todolistmiddleware-after-model-response}
@@ -632,7 +737,7 @@ Inspects the latest assistant message, transitions the blocked /
 stale-iteration state stored in `extra`, and returns a
 `TurnAction` when the loop needs an injected nudge or hard stop.
 
-[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L653)
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L850)
 
 
 
@@ -642,12 +747,13 @@ _class_
 
 Input schema for the `write_todos` tool.
 
-[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L262)
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/todo.py#L276)
 
 
 **Attributes**
 
 - `todos`: `list[Todo]`
+- `wait_for_tasks`: `list[str]`
 
 
 

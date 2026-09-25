@@ -48,7 +48,7 @@ The middleware writes two keys into `AgentContext.extra`:
 - `compaction` — the summary state and the message refs it covers.
 - `compaction_until_msg_index` — the history boundary summarized so far.
 
-When a checkpointer is attached, CubeLoop saves `ctx.extra` at `agent_end`, so the
+When a checkpointer is attached, CubeLoop saves `ctx.extra` after a turn that produced tool results, on HITL suspension, and at `agent_end`, so the
 next process can resume with the existing summary. If the message refs no longer
 match the current history, the middleware clears the stale state and starts over
 rather than sending an invalid summary.

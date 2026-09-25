@@ -77,11 +77,9 @@ jobs:
           name: website-build
           path: website/build/
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/pages-action@v1
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          projectName: cubepi
-          directory: website/build
+          command: pages deploy website/build --project-name=cubepi --branch=main --commit-hash=${{ github.sha }}
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
-          branch: main

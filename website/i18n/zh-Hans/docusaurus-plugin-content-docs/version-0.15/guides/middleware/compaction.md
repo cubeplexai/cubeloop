@@ -44,7 +44,7 @@ middleware 会向 `AgentContext.extra` 写入两个键：
 - `compaction` —— 摘要状态，以及它覆盖的消息引用。
 - `compaction_until_msg_index` —— 已总结到的历史边界。
 
-绑定 checkpointer 时，CubeLoop 会在 `agent_end` 通过 `save_extra` 保存
+绑定 checkpointer 时，CubeLoop 会在产生工具结果的轮次结束之后、HITL 暂停时，以及 `agent_end` 时通过 `save_extra` 保存
 `ctx.extra`，所以下一个进程可以带着已有摘要继续。如果消息引用与当前历史不再
 匹配，middleware 会清除旧状态并重新开始，而不是发送无效摘要。
 

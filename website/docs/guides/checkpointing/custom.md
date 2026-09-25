@@ -30,7 +30,7 @@ in-memory dict — anything that can append-and-list.
 |---|---|
 | `load(thread_id)` | Once, on the first `prompt()` after agent construction |
 | `append(thread_id, messages)` | Inside `message_end`, every time a message is finalised |
-| `save_extra(thread_id, extra)` | At `agent_end`, with the current `_extra` dict |
+| `save_extra(thread_id, extra)` | After a turn that produced tool results, on `agent_suspended`, and at `agent_end`, with the current `_extra` dict |
 
 `load` returns `None` for unknown threads. `append` and `save_extra`
 do nothing useful if you don't already have a thread; create the row
