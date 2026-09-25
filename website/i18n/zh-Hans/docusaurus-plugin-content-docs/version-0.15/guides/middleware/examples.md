@@ -130,7 +130,7 @@ class ToolLoggingMiddleware(Middleware):
 `ctx.context.extra` 是存储每次运行状态的最佳位置，因为：
 
 - 其他中间件可通过同一个 `ctx.context` 看到。
-- Checkpointer 在 `agent_end` 时通过 `save_extra` 持久化。
+- Checkpointer 在产生工具结果的轮次结束之后、运行暂停时，以及 `agent_end` 时通过 `save_extra` 持久化。
 - 新对话开始时（新的 `thread_id`）会自动重置。
 
 ## 滑动窗口截断 {#sliding-window-truncation}
@@ -162,6 +162,23 @@ class SummaryInjector(Middleware):
         summary = "Earlier in this conversation we discussed: …"
         return f"{system_prompt}\n\nContext: {summary}".strip()
 ```
+
+## 内置工具结果长度限制
+
+`ToolResultLimitMiddleware` 在 `after_tool_call` 里截断过长的工具结果文本，避免一次 `execute`、抓取或 MCP 调用的输出撑破下一次模型请求，或超出宿主的事件大小限制。
+
+```python
+from cubeloop.middleware import ToolResultLimitMiddleware
+
+agent = Agent(
+    model=…,
+    middleware=[
+        ToolResultLimitMiddleware(max_chars=20_000),
+    ],
+)
+```
+
+选项、排除名单和放置顺序见[工具结果长度限制](./tool-result-limit.md)。
 
 ## 最大轮次 / 预算上限
 

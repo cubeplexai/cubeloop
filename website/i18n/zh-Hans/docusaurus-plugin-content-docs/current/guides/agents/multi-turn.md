@@ -127,7 +127,7 @@ async with SQLiteCheckpointer("conv.db") as cp:
 
 checkpoint 中的 `extra` 映射也会被恢复。希望持久化 per-thread 状态的
 middleware 应将数据写入 `context.extra`；checkpointer 的 `save_extra` 会在
-`agent_end` 时被调用。宿主应通过 `agent.session.state_context` 访问这个引用稳定的
+产生工具结果的轮次结束之后、运行暂停时，以及 `agent_end` 时被调用。宿主应通过 `agent.session.state_context` 访问这个引用稳定的
 实时映射；需要在空闲时显式恢复状态，则调用
 `await agent.session.load_checkpoint()`。消息和 extra 会一起安装，即使 checkpoint
 中的消息列表为空也一样。

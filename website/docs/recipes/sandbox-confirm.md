@@ -111,7 +111,7 @@ async def host_loop(channel: CheckpointedChannel):
 
 | Human chose | Tool outcome | `hitl_trace["decision"]` | Model sees |
 |---|---|---|---|
-| Approve | Runs with original args | unset (passthrough, no HITL details) | Normal `tool_result` |
+| Approve | Runs with original args | `"human_approve"` | Normal `tool_result` |
 | Deny | Blocked | `"human_deny"` | `tool_result.is_error=True` with user's reason |
 | Edit | Runs with edited args | `"edit"` + `original_args` / `edited_args` | Normal `tool_result` (from the edited execution) |
 

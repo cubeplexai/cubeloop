@@ -156,7 +156,8 @@ async with SQLiteCheckpointer("conv.db") as cp:
 
 The checkpoint `extra` mapping is also restored. Middleware that wants to
 persist per-thread state should write into `context.extra`; the checkpointer's
-`save_extra` is called at `agent_end`. Hosts should use
+`save_extra` is called after a turn that produced tool results, when the run
+suspends, and at `agent_end`. Hosts should use
 `agent.session.state_context`, which is the stable live mapping, and
 `await agent.session.load_checkpoint()` when they need an explicit idle-time
 restore. Messages and extra are installed together, including checkpoints

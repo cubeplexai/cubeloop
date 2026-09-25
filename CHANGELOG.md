@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-09-24
+
 ### Added
 
 - **`ToolResultLimitMiddleware` caps tool-result text in `after_tool_call`.**
@@ -14,7 +16,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   telling the model to narrow the call. The rewrite happens before
   `ToolExecutionEndEvent`, so the model, checkpointer, and host consumers
   all see the truncated result. Image blocks are kept; tools in
-  `exclude_tool_names` pass through.
+  `exclude_tool_names` pass through (`#229`).
+- **`TodoListMiddleware` can wait on host-validated background tasks.**
+  `write_todos` accepts an optional `wait_for_tasks` list. A nonempty list
+  requires `validate_task_wait`; without that callback it is rejected. A
+  successful declaration is checkpointed with the Todo snapshot, run ID, and
+  input boundary. Before the unfinished-Todo guard forces another model
+  call, CubeLoop asks the host again. `valid`, or `cancelled` after the host
+  proves the cancellation, lets the run finish with unfinished items still
+  open. New input invalidates the declaration, including a new run's first
+  message, a HITL answer, and human approval, denial, or editing of a tool
+  call. Automatic policy approval does not. CubeLoop does not start, poll,
+  cancel, or deliver the tasks (`#231`).
+
+### Changed
+
+- **Checkpoint `extra` is saved at more boundaries.** `save_extra` runs after
+  a turn that produced tool results, when a run suspends, and at `agent_end`.
+  A failed write is recorded as a checkpoint failure. The suspension or
+  completion event is not published, and the run is not marked complete
+  (`#231`).
+- **Human approval records `hitl_trace["decision"]="human_approve"`.** The
+  tool still runs with its original arguments. Policy auto-approval stays a
+  silent passthrough (`#231`).
+
+### Fixed
+
+- **HITL answers restored through the resume slot use the same typed
+  normalization as checkpoint-loaded answers**, so a restored JSON answer
+  invalidates a task-wait declaration the same way a live answer does
+  (`#231`).
 
 ## [0.15.0] - 2026-09-16
 
@@ -845,7 +876,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **[0.2.0]** - 2026-05-10 — see the [release notes](https://github.com/cubeplexai/cubepi/releases/tag/v0.2.0).
 - **[0.1.0]** - 2026-05-09 — initial release. See the [release notes](https://github.com/cubeplexai/cubepi/releases/tag/v0.1.0).
 
-[Unreleased]: https://github.com/cubeplexai/cubeloop/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/cubeplexai/cubeloop/compare/v0.15.1...HEAD
+[0.15.1]: https://github.com/cubeplexai/cubeloop/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/cubeplexai/cubeloop/compare/v0.14.1...v0.15.0
 [0.14.1]: https://github.com/cubeplexai/cubeloop/compare/v0.13.6...v0.14.1
 [0.13.6]: https://github.com/cubeplexai/cubeloop/compare/v0.13.5...v0.13.6

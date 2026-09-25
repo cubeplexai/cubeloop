@@ -110,7 +110,7 @@ async def host_loop(channel: CheckpointedChannel):
 
 | 人类选择 | 工具结果 | `hitl_trace["decision"]` | 模型看到 |
 |---|---|---|---|
-| 批准 | 使用原始参数执行 | 未设置（直通，无 HITL 细节） | 正常 `tool_result` |
+| 批准 | 使用原始参数执行 | `"human_approve"` | 正常 `tool_result` |
 | 拒绝 | 被阻止 | `"human_deny"` | `tool_result.is_error=True` 及用户的原因 |
 | 编辑 | 使用编辑后的参数执行 | `"edit"` + `original_args` / `edited_args` | 正常 `tool_result`（来自编辑后的执行） |
 

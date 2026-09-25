@@ -136,7 +136,7 @@ class ToolLoggingMiddleware(Middleware):
 it's:
 
 - Visible to other middleware via the same `ctx.context`.
-- Persisted by checkpointers via `save_extra` at `agent_end`.
+- Persisted by checkpointers via `save_extra` after tool-result turns, on suspension, and at `agent_end`.
 - Reset when a new conversation starts (a new `thread_id`).
 
 ## Sliding-window truncation

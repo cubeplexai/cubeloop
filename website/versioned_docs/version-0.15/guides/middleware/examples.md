@@ -136,7 +136,7 @@ class ToolLoggingMiddleware(Middleware):
 it's:
 
 - Visible to other middleware via the same `ctx.context`.
-- Persisted by checkpointers via `save_extra` at `agent_end`.
+- Persisted by checkpointers via `save_extra` after tool-result turns, on suspension, and at `agent_end`.
 - Reset when a new conversation starts (a new `thread_id`).
 
 ## Sliding-window truncation
@@ -170,6 +170,26 @@ class SummaryInjector(Middleware):
         summary = "Earlier in this conversation we discussed: …"
         return f"{system_prompt}\n\nContext: {summary}".strip()
 ```
+
+## Built-in tool-result cap
+
+`ToolResultLimitMiddleware` truncates oversized tool-result text in
+`after_tool_call` so a runaway `execute` / fetch / MCP payload cannot
+blow the next model call (or a host event-size budget).
+
+```python
+from cubeloop.middleware import ToolResultLimitMiddleware
+
+agent = Agent(
+    model=…,
+    middleware=[
+        ToolResultLimitMiddleware(max_chars=20_000),
+    ],
+)
+```
+
+See [Tool Result Limit](./tool-result-limit.md) for options, exclusions,
+and placement.
 
 ## Built-in compaction
 

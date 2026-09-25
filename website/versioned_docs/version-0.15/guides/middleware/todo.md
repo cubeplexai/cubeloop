@@ -23,13 +23,11 @@ through this reference so state survives checkpointing.
 from cubeloop import Agent
 from cubeloop.middleware import TodoListMiddleware
 
-agent_extra: dict = {}
-
 agent = Agent(
     model=provider.model("claude-sonnet-4-6"),
     system_prompt="You are a thorough assistant.",
     middleware=[
-        TodoListMiddleware(extra_ref=lambda: agent_extra),
+        TodoListMiddleware(extra_ref=lambda: agent.session.state_context),
     ],
 )
 ```
@@ -44,28 +42,23 @@ from cubeloop.middleware import TodoListMiddleware
 
 # extra_ref must return the same object as AgentContext.extra.
 # The helper below is the standard pattern with a checkpointed agent.
-ctx_holder: dict[str, dict] = {}
-
-def extra_ref() -> dict:
-    return ctx_holder.setdefault("extra", {})
-
 agent = Agent(
     model=provider.model("claude-sonnet-4-6"),
     checkpointer=PostgresCheckpointer(...),
     thread_id="conv_123",
     middleware=[
-        TodoListMiddleware(extra_ref=extra_ref),
+        TodoListMiddleware(extra_ref=lambda: agent.session.state_context),
     ],
 )
 ```
 
-In practice the simplest pattern is to pass `lambda: agent.state.extra` — but
-`agent.state` is only valid after the agent is constructed, so a late-binding
-lambda or a shared dict reference both work.
+The public `agent.session.state_context` is the live checkpoint extra mapping.
+The lambda is evaluated after construction. On recovery, call
+`await agent.session.load_checkpoint()` before executing a new request.
 
 ## The `write_todos` tool
 
-The tool accepts a single `todos` list. Each item has:
+The tool accepts a `todos` list and optional `wait_for_tasks` task IDs. Each Todo has:
 
 - `content` — a short task description.
 - `status` — one of `"pending"`, `"in_progress"`, or `"completed"`.
@@ -88,6 +81,62 @@ turn the run proceeds normally regardless of what the model does.
 
 This prevents the common pattern where a model completes work but forgets to
 mark items as done before responding.
+
+## Waiting for host-managed background work
+
+Pass `validate_task_wait` when your application owns background tasks that can
+outlive a run. The async callback has this signature:
+
+```python
+from cubeloop.agent.types import AgentContext
+from cubeloop.middleware import TaskWaitBinding, TaskWaitValidation
+
+async def validate_task_wait(
+    task_ids: list[str],
+    ctx: AgentContext,
+    prior: TaskWaitBinding | None,
+) -> TaskWaitValidation:
+    # Your service checks scope, actor permissions, cancellation, and whether
+    # the tasks still have an observable result to deliver.
+    return await task_service.validate_wait(task_ids, ctx, prior)
+
+middleware = TodoListMiddleware(
+    extra_ref=lambda: agent.session.state_context,
+    validate_task_wait=validate_task_wait,
+)
+```
+
+The host service in this example is application code, not part of CubeLoop.
+It returns `TaskWaitValidation(status="valid", validation={...})` only after
+checking the tasks. Store only JSON-compatible, non-secret evidence in
+`validation`; it is checkpointed and returned in the next `prior` binding.
+No validator means a nonempty `wait_for_tasks` is rejected.
+
+The declaration binds task IDs to the successful Todo update, run, and current
+input boundary. Before forcing a finalization correction, CubeLoop asks the
+host again. A valid wait lets the run end naturally without completing unfinished
+Todos or making another model call. An ordinary Todo update without task IDs
+clears the declaration. New user or internal input, including a new run's initial
+message or a HITL answer (including approval, denial, or editing of a tool call),
+invalidates it. Automatic policy approval is not new human input. A changed or
+unprovable boundary after compaction also requires a new declaration.
+
+If the user cancels previously validated work, the callback may return
+`status="cancelled"` with a nonempty `reason`, after proving cancellation happened
+after the original validation. This also allows natural completion, preserving
+the unfinished list and cancellation reason. It cannot establish a new wait.
+Invalid tasks, lookup failures, or stale bindings keep the ordinary guard.
+Malformed Todo updates, explicit stop, HITL, and other middleware decisions are
+not bypassed.
+
+Use a checkpointer and the live extra mapping for recoverable declarations.
+Extra is saved after tool turns before another model call, before a HITL
+suspension is published, and at normal run end. A failed save does not count as
+a successfully checkpointed wait.
+CubeLoop does not start, poll, cancel, or deliver background tasks, and does not
+keep a waiting Session alive. The host remains responsible for their lifecycle
+and for delivering results in a later input or run. Agents without a Todo list
+do not need to call `write_todos` just to end a run.
 
 ## Stale-todo reminder
 
@@ -125,6 +174,8 @@ All state is stored under well-known keys in `AgentContext.extra`:
 | `todo_guard_suppressed` | `bool` | Guard suppression flag after a blocked episode |
 | `todo_stale_iterations` | `int` | Turns since last `write_todos` call |
 | `todo_finalization_correction` | `bool \| None` | Whether a finalization correction was injected this turn |
+| `todo_task_wait` | `dict \| None` | Validated task IDs, Todo snapshot, run/input boundary, and host evidence |
+| `todo_task_wait_outcome` | `dict \| None` | Last valid/cancelled finalization decision and reason |
 
 These keys are stable across versions. Checkpointers persist them as part of
 `ctx.extra`, so a resumed session starts with the same checklist the model left.

@@ -28,7 +28,7 @@ HITL 生命周期方法；宿主使用相应功能时也需要实现这些方法
 |---|---|
 | `load(thread_id)` | agent 构造后第一次调用 `prompt()` 时，调用一次 |
 | `append(thread_id, messages)` | 在 `message_end` 内，每次消息完成时调用 |
-| `save_extra(thread_id, extra)` | 在 `agent_end` 时，携带当前的 `_extra` 字典调用 |
+| `save_extra(thread_id, extra)` | 产生工具结果的轮次结束之后、`agent_suspended` 时，以及 `agent_end` 时，携带当前的 `_extra` 字典调用 |
 
 对未知的 thread，`load` 返回 `None`。若还没有该 thread，`append` 和 `save_extra` 不会做任何有意义的事；请在第一次调用时创建对应的记录行。
 

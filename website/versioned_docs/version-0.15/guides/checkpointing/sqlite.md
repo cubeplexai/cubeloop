@@ -76,9 +76,10 @@ CREATE TABLE thread_extra (
 - Every `UserMessage`, `AssistantMessage`, and `ToolResultMessage`
   becomes one row in `messages`. Pydantic `model_dump()` is used for
   the JSON payload.
-- The `extra` dict on `AgentContext` is persisted on `agent_end` into
-  `thread_extra`. Middleware that wants thread-scoped state should
-  write into `context.extra`.
+- The `extra` dict on `AgentContext` is persisted into `thread_extra`
+  after a turn that produced tool results, on HITL suspension
+  (`agent_suspended`), and at `agent_end`. Middleware that wants
+  thread-scoped state should write into `context.extra`.
 
 This schema is append-only. CubeLoop never updates or deletes rows.
 

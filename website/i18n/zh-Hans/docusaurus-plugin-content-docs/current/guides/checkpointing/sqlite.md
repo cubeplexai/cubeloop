@@ -72,7 +72,7 @@ CREATE TABLE thread_extra (
 
 - 每条 `UserMessage`、`AssistantMessage`、`ToolResultMessage` 各占
   `messages` 一行。JSON payload 通过 Pydantic `model_dump()` 生成。
-- `AgentContext` 的 `extra` dict 在 `agent_end` 时持久化到 `thread_extra`。
+- `AgentContext` 的 `extra` dict 会在产生工具结果的轮次结束之后、HITL 暂停（`agent_suspended`）时，以及 `agent_end` 时写入 `thread_extra`。
   Middleware 需要持久化线程级状态时,往 `context.extra` 写。
 
 这个 schema 是追加式的。CubeLoop 从不 update 或 delete 行。
