@@ -8,7 +8,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/cubeloop)](https://pypi.org/project/cubeloop/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Docs](https://img.shields.io/badge/Docs-cubeloop.dev-blue?logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjEwNSAxMTAgMzAwIDM0NSI+CiAgPHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0yNjEgMTE3IEwzOTYgMTgzIEwyNDQgMjUyIEwxMjAgMTgzIFoiLz4KICA8cGF0aCBmaWxsPSJ3aGl0ZSIgZD0iTTExNSAxOTggTDIzMiAyNjMgTDIzMiA0MzIgTDExNSAzNjUgWiIvPgogIDxwYXRoIGZpbGw9IndoaXRlIiBkPSJNMzU1IDM0NiBMMzk3IDM2NSBMMzk3IDM3NiBMMjUyIDQ0NiBMMjQ3IDQ0MiBMMjQ3IDM5NSBaIi8%2BCiAgPHJlY3QgZmlsbD0id2hpdGUiIHg9IjI4NyIgeT0iMjY4IiB3aWR0aD0iMjYiIGhlaWdodD0iNzQiIHJ4PSIxMiIvPgogIDxyZWN0IGZpbGw9IndoaXRlIiB4PSIzNTEiIHk9IjI0NyIgd2lkdGg9IjI2IiBoZWlnaHQ9Ijc2IiByeD0iMTIiLz4KPC9zdmc+)](https://cubeloop.dev)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/cubeplexai/cubeloop)
+[![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-blue?logo=readthedocs&logoColor=white)](https://deepwiki.com/cubeplexai/cubeloop)
 [![skills.sh](https://skills.sh/b/cubeplexai/cubeloop)](https://skills.sh/cubeplexai/cubeloop)
 
 CubeLoop is a Pythonic, async-native agent framework designed for high performance, readability, and production-grade persistence. It provides a leaner alternative to graph-based agent runtimes by modeling agent logic as a linear while loop that developers can easily trace and debug.
