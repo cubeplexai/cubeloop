@@ -214,6 +214,18 @@ class CompactionMiddleware(Middleware):
         if boundary >= len(history) or not _state_matches_history(
             history, state, boundary
         ):
+            # Dropping the state is not free: the next send is the RAW history,
+            # which is what the summary was protecting against. It must never be
+            # silent — a drifted ref once cost an operator a 30-turn outage that
+            # looked like "the model is slow" (see #233).
+            if state is not None or boundary > 0:
+                logger.warning(
+                    "CompactionMiddleware: dropping compaction state "
+                    "(boundary=%d, history=%d) — the persisted summary no longer "
+                    "matches this history, so this turn sends the raw history",
+                    boundary,
+                    len(history),
+                )
             boundary = 0
             state = None
             _clear_state(ctx)
@@ -244,6 +256,32 @@ class CompactionMiddleware(Middleware):
             *trailing_controls,
         ]
         tokens_now = real_context_estimate(unpruned_compressed)
+        if state is None or boundary <= 0:
+            # No summary is in effect, so ``unpruned_compressed`` IS the raw
+            # history and ``real_context_estimate`` cannot be trusted for it.
+            # That function is anchored to the most recent usage-bearing
+            # assistant and only adds the char estimate of what follows that
+            # anchor: every message *before* the anchor is assumed to be
+            # accounted for by the anchor's own ``input_tokens``. That holds
+            # only while the anchored turn's prompt is still the prompt being
+            # sent — i.e. while a summary covers the prefix. With the summary
+            # dropped it reports the size of a history that no longer exists.
+            #
+            # Measured on the 901-message conversation from #233: 57,278 tokens
+            # for the compacted view AND 57,278 for the raw history that
+            # replaced it, while the actual send was >= 256,001 tokens. The
+            # threshold check saw 57,278 < 80,281, returned the raw history
+            # without compacting, and the provider answered
+            # ``ContextLengthExceeded``.
+            #
+            # The char estimate does see the whole list, so it acts as a floor
+            # here. It is deliberately a floor and not the estimate itself, and
+            # deliberately only when no summary is in effect: its conservative
+            # chars-per-token ratio over-reads prose, which would double-trigger
+            # compaction on an ordinary compacted view. This mirrors the
+            # anti-thrash guard below, which already sizes the raw history with
+            # ``approx_tokens``.
+            tokens_now = max(tokens_now, approx_tokens(unpruned_compressed))
         if tokens_now < self._max_tokens_before:
             return unpruned_compressed
 

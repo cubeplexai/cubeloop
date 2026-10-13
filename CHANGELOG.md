@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Compaction no longer goes blind when its persisted state is dropped.** Three
+  defects compounded into `ContextLengthExceeded` on long conversations
+  (`#233`):
+  - `message_ref` hashed the whole message dump, including bookkeeping the
+    framework and the host rewrite after the fact — `run_id` (re-stamped on
+    messages the framework re-touches, e.g. the injected `todo_stale_reminder`
+    nudges) and `timestamp` / `metadata` (host-owned; CubePlex writes a
+    per-turn `memory_snapshot.captured_at` into it). On a 901-message
+    conversation 38 of 877 refs drifted between compaction runs, so
+    `_state_matches_history` returned False and the state was discarded.
+    Identity is now the role, the content, and the tool linkage only.
+  - The trigger sized a raw-history send with `real_context_estimate`, which is
+    anchored to the most recent usage-bearing assistant and adds only what
+    follows it. Every message *before* the anchor is assumed to be covered by
+    that turn's `input_tokens` — true only while a summary covers the prefix.
+    With the state dropped it reported 57,278 tokens for a 901-message history
+    whose actual send was >= 256,001. When no summary is in effect the trigger
+    now also consults the char estimate, which does see the whole list.
+  - Dropping the state is logged at WARNING. It means the next send is the raw
+    history; previously it was silent, so the failure presented as "the model
+    got slow" until the provider returned 400.
+
 ## [0.15.1] - 2026-09-24
 
 ### Added

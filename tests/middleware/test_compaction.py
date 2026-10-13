@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from cubeloop.agent.types import AgentContext
@@ -20,6 +21,7 @@ from cubeloop.providers.base import (
     StreamOptions,
     TextContent,
     ToolDefinition,
+    ToolResultMessage,
     Usage,
     UserMessage,
 )
@@ -1428,3 +1430,189 @@ async def test_compaction_state_refs_survive_trailing_control_becoming_internal(
     assert resumed[-1] == with_response[-1]
     assert ctx.extra["compaction_until_msg_index"] == boundary
     assert ctx.extra["compaction"] == persisted_state
+
+
+# --- #233: a dropped summary must not take the trigger down with it ---
+
+
+def test_message_ref_ignores_volatile_bookkeeping() -> None:
+    """Identity is the message's content, not its bookkeeping.
+
+    ``run_id`` / ``timestamp`` / ``metadata`` are rewritten after the message is
+    stored — the framework re-stamps ``run_id`` on messages it re-touches (the
+    injected ``todo_stale_reminder`` nudges did this every turn) and hosts write
+    per-turn snapshots into ``UserMessage.metadata``. Hashing them made refs
+    drift, which is what dropped the state in #233.
+    """
+    baseline = UserMessage(content=[TextContent(text="hello")], run_id="run-1")
+    restamped = UserMessage(
+        content=[TextContent(text="hello")],
+        run_id="run-2",
+        timestamp=1_231.5,
+    )
+    snapshot_a = UserMessage(
+        content=[TextContent(text="hello")],
+        metadata={"memory_snapshot": {"captured_at": "2026-10-13T11:43:58Z"}},
+    )
+    snapshot_b = UserMessage(
+        content=[TextContent(text="hello")],
+        metadata={"memory_snapshot": {"captured_at": "2026-10-13T12:13:44Z"}},
+    )
+
+    assert message_ref(baseline) == message_ref(restamped)
+    assert message_ref(snapshot_a) == message_ref(snapshot_b)
+
+    # Content and tool linkage are identity and must still be hashed.
+    assert message_ref(baseline) != message_ref(
+        UserMessage(content=[TextContent(text="hello!")], run_id="run-1")
+    )
+    result = [
+        ToolResultMessage(
+            tool_call_id="c1", tool_name="t", content=[TextContent(text="x")]
+        ),
+        ToolResultMessage(
+            tool_call_id="c2", tool_name="t", content=[TextContent(text="x")]
+        ),
+    ]
+    assert message_ref(result[0]) != message_ref(result[1])
+
+
+def _stale_state_for(messages: list[Message]) -> CompactionState:
+    """A state whose refs describe a *different* history — the shape of #233."""
+    return CompactionState(
+        summary="stale summary from a history that no longer matches",
+        summarized_message_refs=["sha256:does-not-match"],
+    )
+
+
+async def test_over_limit_raw_history_is_compacted_after_state_invalidation() -> None:
+    """The trigger must size the raw history it is about to send.
+
+    Regression (#233): ``real_context_estimate`` anchors on the most recent
+    usage-bearing assistant and adds only what follows it, so it reports the
+    size of the summary-era prompt — not the raw history that replaces it once
+    the state is dropped. On the real conversation it returned 57,278 for both
+    the compacted view and the 901-message raw history (actual send:
+    >= 256,001 tokens). The check saw 57,278 < 80,281 and returned the
+    over-limit history without compacting.
+    """
+    provider = _FakeSummaryProvider(reply="summary")
+    middleware = CompactionMiddleware(
+        summary_model=BoundModel(
+            provider=provider,
+            spec=Model(id="summary-model", provider_id="faux"),
+        ),
+        # The production values from #233.
+        max_tokens_before_compact=80_281,
+        keep_tail_tokens=8,
+        min_compact_messages=2,
+    )
+    messages: list[Message] = [
+        _user("turn 1"),
+        _assistant("reply 1"),
+        # 200_000 chars ≈ 100_000 approx tokens: on its own well over the
+        # 80_281 threshold. It sits BEFORE the anchor, which is exactly why the
+        # anchor-based estimate cannot see it.
+        _user("x" * 200_000),
+        AssistantMessage(
+            content=[TextContent(text="ok")],
+            usage=Usage(input_tokens=57_000),
+        ),
+        _user("continue"),
+        _assistant("reply"),
+    ]
+    ctx = AgentContext(
+        system_prompt="",
+        messages=messages,
+        extra={
+            "compaction": _stale_state_for(messages).model_dump(),
+            "compaction_until_msg_index": 3,
+        },
+    )
+
+    result = await middleware.transform_context(messages, ctx=ctx)
+
+    # The state was dropped, so compaction had to run on the raw history.
+    assert len(provider.calls) == 1
+    assert ctx.extra["compaction_until_msg_index"] > 0
+    assert len(result) < len(messages)
+    assert result[0].metadata.get("synthetic_source") == "compaction_summary"
+    # The over-limit prefix is gone; only the protected tail survived.
+    assert not any(
+        isinstance(block, TextContent) and len(block.text) > 100_000
+        for message in result
+        if isinstance(message, (UserMessage, AssistantMessage))
+        for block in message.content
+        if isinstance(block, TextContent)
+    )
+
+
+async def test_char_floor_does_not_re_trigger_on_a_valid_compacted_view() -> None:
+    """The floor covers only the dropped-state fallback.
+
+    With a live summary the view is already compacted: the raw history behind it
+    must not drive the trigger, or every turn would re-summarise. Guards against
+    the fix for #233 being applied unconditionally.
+    """
+    provider = _FakeSummaryProvider(reply="summary")
+    middleware = _make_middleware(
+        provider, max_tokens_before=80_281, keep_tail_tokens=8
+    )
+    messages: list[Message] = [
+        # A raw prefix that is far over the threshold, but already summarised.
+        _user("x" * 200_000),
+        _assistant("reply 1"),
+        _user("turn 2"),
+        _assistant("reply 2"),
+        # The live tail — small, and with no usage of its own.
+        _user("continue"),
+        _assistant("reply 3"),
+    ]
+    boundary = 4
+    ctx = AgentContext(
+        system_prompt="",
+        messages=messages,
+        extra={
+            "compaction": CompactionState(
+                summary="live summary",
+                summarized_message_refs=message_refs(messages[:boundary]),
+            ).model_dump(),
+            "compaction_until_msg_index": boundary,
+        },
+    )
+
+    result = await middleware.transform_context(messages, ctx=ctx)
+
+    assert provider.calls == []
+    assert len(result) == 3
+    assert result[0].metadata.get("synthetic_source") == "compaction_summary"
+    assert "live summary" in result[0].content[0].text
+    assert result[1:] == messages[boundary:]
+    assert ctx.extra["compaction_until_msg_index"] == boundary
+
+
+async def test_dropping_compaction_state_is_logged(caplog: Any) -> None:
+    """A dropped summary means a raw-history send; it must not be silent."""
+    provider = _FakeSummaryProvider(reply="summary")
+    middleware = _make_middleware(provider, max_tokens_before=1_000_000)
+    messages: list[Message] = [
+        _user("brand new 1"),
+        _assistant("reply 1"),
+        _user("brand new 2"),
+        _assistant("reply 2"),
+    ]
+    ctx = AgentContext(
+        system_prompt="",
+        messages=messages,
+        extra={
+            "compaction": _stale_state_for(messages).model_dump(),
+            "compaction_until_msg_index": 2,
+        },
+    )
+
+    with caplog.at_level(logging.WARNING):
+        await middleware.transform_context(messages, ctx=ctx)
+
+    assert any(
+        "dropping compaction state" in record.getMessage() for record in caplog.records
+    )
