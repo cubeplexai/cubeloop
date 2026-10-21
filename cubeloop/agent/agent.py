@@ -52,6 +52,19 @@ from cubeloop.types import JsonObject, StructuredValue
 TMessage = TypeVar("TMessage")
 
 
+def _ensure_message_id(message: Message) -> None:
+    """Assign a transcript id in place when the message does not have one.
+
+    Called before the message is appended. In-place, and before any
+    ``model_copy`` that stamps ``run_id``, so the object the loop keeps and
+    the object written to the checkpointer carry the same id. A non-empty id
+    is left alone. Checkpoint load does not come through here, so rows that
+    predate the field stay empty and compaction keeps hashing them.
+    """
+    if not message.id:
+        message.id = uuid.uuid4().hex
+
+
 def _consume_control_exception(future: asyncio.Future[StructuredValue]) -> None:
     """Mark a detach control exception retrieved without changing awaiters."""
     if not future.cancelled():
@@ -1167,6 +1180,7 @@ class Agent(Generic[TMessage]):
                     timestamp=time.time(),
                     run_id=owning_run_id,
                 )
+                _ensure_message_id(synthetic)
                 self._state._messages.append(synthetic)
                 await self.checkpointer.append(self.thread_id, [synthetic])
 
@@ -1180,6 +1194,7 @@ class Agent(Generic[TMessage]):
                     timestamp=time.time(),
                     run_id=owning_run_id,
                 )
+                _ensure_message_id(term)
                 self._state._messages.append(term)
                 await self.checkpointer.append(self.thread_id, [term])
 
@@ -1318,18 +1333,16 @@ class Agent(Generic[TMessage]):
             for block in last_assistant.content:
                 if not isinstance(block, ToolCall) or block.id in answered:
                     continue
-                synthetic.append(
-                    ToolResultMessage(
-                        tool_call_id=block.id,
-                        tool_name=block.name,
-                        content=[
-                            TextContent(text="[Tool execution cancelled by user]")
-                        ],
-                        is_error=True,
-                        timestamp=time.time(),
-                        run_id=owning_run_id,
-                    )
+                cancelled = ToolResultMessage(
+                    tool_call_id=block.id,
+                    tool_name=block.name,
+                    content=[TextContent(text="[Tool execution cancelled by user]")],
+                    is_error=True,
+                    timestamp=time.time(),
+                    run_id=owning_run_id,
                 )
+                _ensure_message_id(cancelled)
+                synthetic.append(cancelled)
 
             if not synthetic:
                 return
@@ -1348,6 +1361,7 @@ class Agent(Generic[TMessage]):
             self._state.streaming_message = event.message
         elif event.type == "message_end":
             msg = event.message
+            _ensure_message_id(msg)
             active = self._state.active_run_id
             if active is not None:
                 if msg.run_id is None:

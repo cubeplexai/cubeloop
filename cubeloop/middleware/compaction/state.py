@@ -57,6 +57,9 @@ def message_ref(message: Message) -> str:
     payload = message.model_dump(mode="json", exclude_none=True)
     for field in _VOLATILE_REF_FIELDS:
         payload.pop(field, None)
+    # An unset id serialises as "". Leave it out of the hash so rows written
+    # before the field existed keep the ref they were stored under.
+    payload.pop("id", None)
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
