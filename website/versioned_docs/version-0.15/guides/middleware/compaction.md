@@ -49,9 +49,12 @@ The middleware writes two keys into `AgentContext.extra`:
 - `compaction_until_msg_index` — the history boundary summarized so far.
 
 When a checkpointer is attached, CubeLoop saves `ctx.extra` after a turn that produced tool results, on HITL suspension, and at `agent_end`, so the
-next process can resume with the existing summary. If the message refs no longer
-match the current history, the middleware clears the stale state and starts over
-rather than sending an invalid summary.
+next process can resume with the existing summary. A message that has an
+`id` is referenced by that id. Older messages are referenced by a hash of
+role, content, and tool linkage, ignoring `run_id`, `timestamp`, and
+`metadata`. If the refs no longer match the current history, the middleware
+logs a warning, clears the stale state, and starts over rather than sending
+an invalid summary.
 
 ## How compaction triggers
 
@@ -64,7 +67,10 @@ a single agent turn, between tool-call iterations — along two dimensions:
   — so it stays accurate under prompt caching, where most of the prompt is served
   from cache and would be invisible to a character-only estimate. Before the first
   model response (no usage yet), it falls back to a character estimate. Zero-usage
-  error/abort messages are skipped so a failure never resets the estimate.
+  error/abort messages are skipped so a failure never resets the estimate. When
+  no summary is in effect, the usage anchor does not cover the prefix, so the
+  check also takes a character estimate of the whole history and uses the
+  larger number.
 
 - **In-run boundaries.** The summary boundary advances at any self-contained
   *turn boundary*, not only at user messages. A long agentic run — one user prompt

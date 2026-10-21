@@ -45,8 +45,10 @@ middleware 会向 `AgentContext.extra` 写入两个键：
 - `compaction_until_msg_index` —— 已总结到的历史边界。
 
 绑定 checkpointer 时，CubeLoop 会在产生工具结果的轮次结束之后、HITL 暂停时，以及 `agent_end` 时通过 `save_extra` 保存
-`ctx.extra`，所以下一个进程可以带着已有摘要继续。如果消息引用与当前历史不再
-匹配，middleware 会清除旧状态并重新开始，而不是发送无效摘要。
+`ctx.extra`，所以下一个进程可以带着已有摘要继续。已有 `id` 的消息用这个 id
+作为引用。更早的消息用角色、内容和工具关联的哈希作为引用，不计入 `run_id`、
+`timestamp` 和 `metadata`。如果引用与当前历史不再匹配，middleware 会记一条
+警告，清除旧状态并重新开始，而不是发送无效摘要。
 
 ## 压缩触发机制
 
@@ -58,7 +60,8 @@ middleware 会向 `AgentContext.extra` 写入两个键：
   `input_tokens + cache_read_tokens + cache_write_tokens` ——所以在 prompt
   caching 下依然准确（此时大部分 prompt 由缓存提供，纯字符估算根本看不到）。
   首次模型响应前（还没有 usage）回退到字符估算。零值的 error/abort 消息会被
-  跳过，因此一次失败不会重置估算。
+  跳过，因此一次失败不会重置估算。没有生效中的摘要时，usage 锚点盖不住前缀，
+  判据会再取整段历史的字符估算，并采用两者中较大的数。
 
 - **run 内边界。** 摘要边界可以在任何**自洽的 turn 边界**前移，不再只限于用户
   消息。一个长 agentic run ——一条用户 prompt 后跟着多轮工具调用、中间没有用户
