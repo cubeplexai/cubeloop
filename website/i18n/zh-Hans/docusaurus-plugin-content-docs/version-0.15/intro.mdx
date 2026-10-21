@@ -75,5 +75,7 @@ CubeLoop 0.15 增加 Execution Session，供宿主获取明确的执行结果、
 
 0.15.1 增加工具结果文本上限，并允许 `TodoListMiddleware` 在宿主已校验的后台任务尚未完成时结束当前 run。见[工具结果长度限制](./guides/middleware/tool-result-limit.md)和[待办列表](./guides/middleware/todo.md)。
 
+0.15.2 给写入后的消息一个稳定的 `id`。压缩摘要被丢弃时会记一条警告，并按整段历史估算长度。见[上下文压缩](./guides/middleware/compaction.md)。
+
 源代码、Issue 和讨论都在
 [GitHub](https://github.com/cubeplexai/cubeloop)。

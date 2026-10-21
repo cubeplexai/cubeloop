@@ -85,5 +85,9 @@ run while host-validated background tasks are still open. See
 [Tool Result Limit](./guides/middleware/tool-result-limit.md) and
 [Todo List](./guides/middleware/todo.md).
 
+0.15.2 gives each appended message a stable `id`. A dropped compaction
+summary is logged, and the size check then counts the whole history. See
+[Compaction](./guides/middleware/compaction.md).
+
 Source, issues, and discussion live on
 [GitHub](https://github.com/cubeplexai/cubeloop).

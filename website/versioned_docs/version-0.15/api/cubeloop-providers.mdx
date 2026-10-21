@@ -12,13 +12,14 @@ hide_table_of_contents: false
 _class_
 
 
-[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L104)
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L110)
 
 
 **Attributes**
 
 - `role`: `Literal['assistant']`
 - `content`: `list[Content | ThinkingContent | ToolCall]`
+- `id`: `str`
 - `stop_reason`: `str`
 - `error_message`: `str | None`
 - `error_type`: `str | None`
@@ -682,7 +683,7 @@ _class_
 _class_
 
 
-[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L124)
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L131)
 
 
 **Attributes**
@@ -693,6 +694,7 @@ _class_
 - `content`: `list[Content]`
 - `details`: `StructuredValue`
 - `is_error`: `bool`
+- `id`: `str`
 - `timestamp`: `float | None`
 - `metadata`: `JsonObject`
 - `run_id`: `str | None`
@@ -719,13 +721,14 @@ _class_
 _class_
 
 
-[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L96)
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/providers/base.py#L101)
 
 
 **Attributes**
 
 - `role`: `Literal['user']`
 - `content`: `list[Content]`
+- `id`: `str`
 - `timestamp`: `float | None`
 - `metadata`: `JsonObject`
 - `run_id`: `str | None`
