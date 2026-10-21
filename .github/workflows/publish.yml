@@ -1,14 +1,56 @@
 name: Publish to PyPI
 
+# A pushed vX.Y.Z tag is the publish trigger. The GitHub Release is created
+# at the end with GITHUB_TOKEN, which does not start another workflow run.
+# PyPI trusted publishing is also pinned to this file, so both stay here.
+# Creating a Release by hand still runs this workflow; its body is replaced
+# from CHANGELOG.md on the tagged commit.
+
 on:
+  push:
+    tags:
+      - "v*.*.*"
   release:
     types: [published]
 
 permissions:
   contents: read
 
+concurrency:
+  group: publish-${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+
 jobs:
+  release-notes:
+    name: Prepare release notes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Render changelog and pull requests
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release-notes.py "$RELEASE_TAG" > release-notes.md
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="$RELEASE_TAG" --jq .body > generated-release-notes.md
+          printf '\n---\n\n## Pull requests and contributors\n\n' >> release-notes.md
+          cat generated-release-notes.md >> release-notes.md
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+
   build:
+    needs: release-notes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -61,3 +103,30 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
+
+  github-release:
+    name: Create or update GitHub release
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-notes
+          path: .
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --notes-file release-notes.md
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --notes-file release-notes.md
+          fi

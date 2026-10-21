@@ -88,10 +88,10 @@ jobs:
         run: uv sync --all-extras --dev
 
       - name: Ruff check
-        run: uv run ruff check cubeloop/ tests/
+        run: uv run ruff check cubeloop/ tests/ scripts/
 
       - name: Ruff format check
-        run: uv run ruff format --check cubeloop/ tests/
+        run: uv run ruff format --check cubeloop/ tests/ scripts/
 
       - name: Mypy
         run: uv run mypy cubeloop
