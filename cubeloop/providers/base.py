@@ -93,9 +93,15 @@ class ToolCall(BaseModel):
     arguments: JsonObject
 
 
+# ``id`` is the transcript identity used by compaction. Empty means the
+# message has not been appended yet, or it was stored before the field
+# existed. It is not a ``default_factory``: loading an old checkpoint row
+# must keep ``""`` so those rows stay on the content hash. The agent fills
+# it once, in place, at append time, and keeps a host-supplied value.
 class UserMessage(BaseModel):
     role: Literal["user"] = "user"
     content: list[Content]
+    id: str = ""
     timestamp: float | None = None
     metadata: JsonObject = Field(default_factory=dict)
     run_id: str | None = None
@@ -104,6 +110,7 @@ class UserMessage(BaseModel):
 class AssistantMessage(BaseModel):
     role: Literal["assistant"] = "assistant"
     content: list[Content | ThinkingContent | ToolCall]
+    id: str = ""
     stop_reason: str = "stop"
     error_message: str | None = None
     error_type: str | None = None
@@ -128,6 +135,7 @@ class ToolResultMessage(BaseModel):
     content: list[Content]
     details: StructuredValue = None
     is_error: bool = False
+    id: str = ""
     timestamp: float | None = None
     metadata: JsonObject = Field(default_factory=dict)
     run_id: str | None = None

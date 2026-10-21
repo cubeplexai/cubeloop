@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 from typing import Any
 
@@ -131,14 +133,13 @@ def test_load_state_accepts_state_and_ignores_unknown_values() -> None:
 
 
 def test_message_ref_prefers_explicit_message_id() -> None:
-    class _MessageWithId:
-        id = "msg-123"
+    message = UserMessage(content=[TextContent(text="hello")], id="msg-123")
+    rewritten = message.model_copy(
+        update={"run_id": "other", "metadata": {"captured_at": "later"}}
+    )
 
-        def model_dump(self, **kwargs: Any) -> dict[str, Any]:
-            del kwargs
-            return {"content": "unused"}
-
-    assert message_ref(_MessageWithId()) == "id:msg-123"  # type: ignore[arg-type]
+    assert message_ref(message) == "id:msg-123"
+    assert message_ref(rewritten) == "id:msg-123"
 
 
 async def test_over_threshold_writes_json_safe_state_to_ctx_extra() -> None:
@@ -1475,6 +1476,23 @@ def test_message_ref_ignores_volatile_bookkeeping() -> None:
         ),
     ]
     assert message_ref(result[0]) != message_ref(result[1])
+
+
+def test_unset_message_id_does_not_change_the_content_hash() -> None:
+    """Rows stored before ``id`` existed must keep their ref.
+
+    ``model_dump`` now includes ``id: ""``. The hash fallback drops that key,
+    so a checkpoint written by the previous release still matches.
+    """
+    message = UserMessage(content=[TextContent(text="hello")], run_id="run-1")
+    payload = message.model_dump(mode="json", exclude_none=True)
+    assert payload["id"] == ""
+    payload.pop("id")
+    for field in ("run_id", "timestamp", "metadata"):
+        payload.pop(field, None)
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+
+    assert message_ref(message) == "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
 def _stale_state_for(messages: list[Message]) -> CompactionState:

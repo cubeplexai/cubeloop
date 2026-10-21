@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Messages carry a stable `id`.** `UserMessage`, `AssistantMessage`, and
+  `ToolResultMessage` have `id: str`, empty until the agent appends the
+  message. A host may set it first; that value is kept. The id is written
+  onto both the object the loop keeps and the object stored in the
+  checkpointer. Rows saved before this field existed load as `""` and
+  compaction keeps identifying them by content hash. New messages use
+  `id:`, so a later rewrite of `run_id`, `timestamp`, or `metadata` does
+  not change which transcript entry a summary covers.
+
 ### Fixed
 
 - **Compaction no longer goes blind when its persisted state is dropped.** Three
