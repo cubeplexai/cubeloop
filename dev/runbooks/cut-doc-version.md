@@ -289,6 +289,18 @@ Then in the rendered site (`pnpm start` or the preview deploy):
 
 ## After the cut
 
-The release itself (tag, GitHub Release, PyPI publish) is a separate runbook
-— but the order is: cut docs → bump pyproject.toml if not already → merge
-PR → tag → push tag → create GitHub Release (triggers PyPI publish).
+Push the annotated `vX.Y.Z` tag only after main CI and the docs deploy for
+the merge commit have succeeded. `.github/workflows/publish.yml` runs on
+that tag. It publishes both packages to TestPyPI and then PyPI, then creates
+the GitHub Release.
+
+The Release body is the matching `## [X.Y.Z] - YYYY-MM-DD` section of
+`CHANGELOG.md`, followed by the pull requests merged since the previous
+release. The workflow stops before publishing if that section is missing or
+empty, or if `pyproject.toml` and `compat/cubepi/pyproject.toml` are not
+both exactly `X.Y.Z`. Keep the changelog on the tagged commit. A rerun reads
+that commit and replaces the Release body.
+
+A Release created by hand still starts the same workflow, and the generated
+body replaces whatever was typed in. The usual path is to push the tag and
+let the workflow create the Release.
