@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`pip install cubeloop[mcp]` stays on mcp 1.x.** The `mcp` extra asked for
+  `mcp>=1.0` with no upper bound, so fresh installs now get mcp 2.x, which
+  removed `streamablehttp_client` and changed the transport's yield shape, and
+  every Streamable HTTP MCP server failed to load. The extra (and the dev
+  group) are capped at `mcp<2`.
+
 ## [0.15.2] - 2026-10-21
 
 ### Added
