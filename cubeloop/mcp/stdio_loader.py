@@ -6,7 +6,11 @@ import asyncio
 from typing import Any
 
 from cubeloop.mcp._adapter import make_mcp_agent_tool
-from cubeloop.mcp.types import MCPDiscoveryResult, server_info_from_result, tool_info_from_desc
+from cubeloop.mcp.types import (
+    MCPDiscoveryResult,
+    server_info_from_result,
+    tool_info_from_desc,
+)
 
 
 async def load_mcp_tools_stdio(
@@ -45,7 +49,8 @@ async def load_mcp_tools_stdio(
         make_mcp_agent_tool(
             name=desc.name,
             description=desc.description or "",
-            input_schema=_field(desc, "input_schema", "inputSchema") or {"type": "object", "properties": {}},
+            input_schema=_field(desc, "input_schema", "inputSchema")
+            or {"type": "object", "properties": {}},
             call_remote=_call_remote,
             protocol_version=protocol_version,
         )
