@@ -77,5 +77,7 @@ CubeLoop 0.15 增加 Execution Session，供宿主获取明确的执行结果、
 
 0.15.2 给写入后的消息一个稳定的 `id`。压缩摘要被丢弃时会记一条警告，并按整段历史估算长度。见[上下文压缩](./guides/middleware/compaction.md)。
 
+0.15.3 把 `cubeloop[mcp]` 限制在 mcp 1.x。mcp 2.x 移除了 `streamablehttp_client`，Streamable HTTP 服务器因此无法加载。
+
 源代码、Issue 和讨论都在
 [GitHub](https://github.com/cubeplexai/cubeloop)。
