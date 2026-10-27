@@ -8,6 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from cubeloop.mcp.http_loader import _open_client
+
 
 class _FakeClient:
     def __init__(self, *, protocol_version: str = "2026-07-28") -> None:
@@ -125,7 +127,7 @@ async def test_load_mcp_tools_http_times_out_tool_calls(monkeypatch) -> None:
 
     monkeypatch.setattr(http_loader, "_open_client", fake_open_client)
     discovery = await load_mcp_tools_http("https://mcp.example/mcp", timeout=0.01)
-    with pytest.raises(asyncio.TimeoutError):
+    with pytest.raises(TimeoutError):
         await discovery.tools[0].execute(
             "tc-timeout",
             discovery.tools[0].parameters(query="x"),
@@ -140,3 +142,83 @@ async def test_load_mcp_tools_http_rejects_unknown_transport() -> None:
 
     with pytest.raises(ValueError, match="unsupported MCP transport"):
         await load_mcp_tools_http("https://mcp.example/mcp", transport="websocket")  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_open_client_streamable_http_branches(monkeypatch) -> None:
+    """Directly test _open_client with streamable_http transport to ensure lines are covered."""
+    captured_init = []
+
+    class DummyClient:
+        def __init__(self, transport_or_url):
+            captured_init.append(transport_or_url)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+    import mcp
+    import mcp.client.streamable_http
+
+    @asynccontextmanager
+    async def fake_streamable(url, http_client=None):
+        yield "streamable_stream"
+
+    monkeypatch.setattr(mcp, "Client", DummyClient)
+    monkeypatch.setattr(
+        mcp.client.streamable_http, "streamable_http_client", fake_streamable
+    )
+
+    # Test with headers
+    async with _open_client(
+        "https://mcp.example/mcp",
+        headers={"Authorization": "Bearer test"},
+        timeout=15.0,
+        transport="streamable_http",
+    ) as client:
+        assert isinstance(client, DummyClient)
+
+    # Test without headers
+    async with _open_client(
+        "https://mcp.example/mcp",
+        headers=None,
+        timeout=15.0,
+        transport="streamable_http",
+    ) as client:
+        assert isinstance(client, DummyClient)
+
+
+@pytest.mark.asyncio
+async def test_open_client_sse_branch(monkeypatch) -> None:
+    """Directly test _open_client with sse transport."""
+    captured_init = []
+
+    class DummyClient:
+        def __init__(self, transport):
+            captured_init.append(transport)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+    import mcp
+    import mcp.client.sse
+
+    @asynccontextmanager
+    async def fake_sse(url, headers=None, timeout=None, sse_read_timeout=None):
+        yield "sse_stream"
+
+    monkeypatch.setattr(mcp, "Client", DummyClient)
+    monkeypatch.setattr(mcp.client.sse, "sse_client", fake_sse)
+
+    async with _open_client(
+        "https://mcp.example/sse",
+        headers={"x-test": "1"},
+        timeout=20.0,
+        transport="sse",
+    ) as client:
+        assert isinstance(client, DummyClient)

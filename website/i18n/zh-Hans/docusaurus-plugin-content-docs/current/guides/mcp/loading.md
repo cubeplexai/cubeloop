@@ -13,7 +13,9 @@ description: "将 MCP 服务器中的工具加载到 CubeLoop agent，包括基�
 pip install "cubeloop[mcp]"
 ```
 
-这将引入 `mcp` SDK。
+这将引入 MCP Python SDK v2（`mcp>=2,<3`）。
+
+CubeLoop 的加载器使用 SDK 高层 `Client` 的 auto 模式：优先走 MCP 2026-07-28（`server/discover`）路径，当服务器只支持更早协议版本时，再回退到旧版 `initialize` 握手。
 
 ## stdio 传输：本地子进程
 
@@ -56,23 +58,31 @@ asyncio.run(main())
 | `args` | 服务器的 argv |
 | `env` | 环境变量（可选） |
 | `cwd` | 工作目录（可选） |
-| `timeout` | `initialize` / `list` / `call` 各步骤的挂钟超时时间 |
+| `timeout` | `list` / `call` 的挂钟超时时间 |
 
-## HTTP/SSE 传输：远程服务器
+## HTTP 传输：远程服务器
 
 适用于托管的 MCP 服务器（Sentry、GitHub、内部服务等）：
 
 ```python
 from cubeloop.mcp import load_mcp_tools_http
 
+# 默认传输是旧版 SSE。
 tools = await load_mcp_tools_http(
     server_url="https://mcp.example.com/sse",
     headers={"Authorization": "Bearer <token>"},
     timeout=30.0,
 )
+
+# MCP 2026-07-28 服务器优先使用 Streamable HTTP。
+tools = await load_mcp_tools_http(
+    server_url="https://mcp.example.com/mcp",
+    headers={"Authorization": "Bearer <token>"},
+    transport="streamable_http",
+)
 ```
 
-`load_mcp_tools_http` 使用 MCP SDK 的 SSE 客户端。模式与 stdio 相同：一次连接用于枚举，每次工具调用建立新连接。
+`load_mcp_tools_http` 支持 `transport="sse"`（默认）和 `transport="streamable_http"`。模式与 stdio 相同：一次连接用于枚举，每次工具调用建立新连接。在新协议上，SDK 会自行写入必需的路由头（`MCP-Protocol-Version`、`Mcp-Method`、`Mcp-Name`）。
 
 HTTP 服务器常用的认证模式参见 [MCP 认证](./auth)。
 
