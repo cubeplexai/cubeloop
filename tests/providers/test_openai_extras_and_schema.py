@@ -25,12 +25,12 @@ def _model() -> Model:
     return Model(id="gpt-4o", provider_id="openai", api="openai")
 
 
-def _make_chunk(*, finish_reason=None):
+def _make_chunk(*, finish_reason=None, text: str | None = None):
     return SimpleNamespace(
         id="x",
         choices=[
             SimpleNamespace(
-                delta=SimpleNamespace(content=None, tool_calls=None),
+                delta=SimpleNamespace(content=text, tool_calls=None),
                 finish_reason=finish_reason,
             )
         ],
@@ -280,6 +280,7 @@ async def test_usage_subtracts_cached_tokens_from_input() -> None:
             prompt_tokens_details=SimpleNamespace(cached_tokens=800),
         ),
     )
+    content_chunk = _make_chunk(text="ok")
     final = _make_chunk(finish_reason="stop")
 
     with patch("openai.AsyncOpenAI") as mock_openai:
@@ -289,7 +290,7 @@ async def test_usage_subtracts_cached_tokens_from_input() -> None:
         client.chat.completions = MagicMock()
 
         async def create(**_):
-            return _async_iter([usage_chunk, final])
+            return _async_iter([content_chunk, usage_chunk, final])
 
         client.chat.completions.create = create
 
@@ -321,6 +322,7 @@ async def test_usage_no_cached_field_input_tokens_is_full_prompt() -> None:
             prompt_tokens_details=None,
         ),
     )
+    content_chunk = _make_chunk(text="ok")
     final = _make_chunk(finish_reason="stop")
 
     with patch("openai.AsyncOpenAI") as mock_openai:
@@ -330,7 +332,7 @@ async def test_usage_no_cached_field_input_tokens_is_full_prompt() -> None:
         client.chat.completions = MagicMock()
 
         async def create(**_):
-            return _async_iter([usage_chunk, final])
+            return _async_iter([content_chunk, usage_chunk, final])
 
         client.chat.completions.create = create
 

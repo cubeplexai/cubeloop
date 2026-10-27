@@ -1230,6 +1230,36 @@ class TestAnthropicStreamError:
         with pytest.raises(_FatalError):
             task.result()
 
+    @pytest.mark.asyncio
+    async def test_empty_completion_emits_error(self):
+        """When Anthropic returns end_turn with no content, emit EmptyCompletion error."""
+        events: list = []
+        final = _make_final_message(
+            content=[],
+            stop_reason="end_turn",
+            input_tokens=10,
+            output_tokens=0,
+        )
+        mock_stream = _MockAnthropicStream(events, final)
+
+        provider = _make_provider("none")
+        _inject_mock_stream(provider, mock_stream)
+
+        model = _anthropic_model()
+        ms = await provider.stream(
+            model, [UserMessage(content=[TextContent(text="hi")])]
+        )
+
+        stream_events = [e async for e in ms]
+        result = await ms.result()
+
+        assert result.stop_reason == "error"
+        assert result.error_type == "EmptyCompletion"
+        assert any(
+            e.type == "error" and e.error_type == "EmptyCompletion"
+            for e in stream_events
+        )
+
 
 class TestAnthropicConvertResponse:
     """Test _convert_response with all block types."""

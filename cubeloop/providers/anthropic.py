@@ -5,6 +5,7 @@ import json
 import time
 from typing import Any, Literal, Protocol, runtime_checkable
 
+from cubeloop.errors import EmptyCompletion
 from cubeloop.providers.base import (
     AssistantMessage,
     BaseProvider,
@@ -28,6 +29,7 @@ from cubeloop.providers.base import (
     apply_sender_attribution,
     invoke_on_payload,
     invoke_on_response,
+    is_empty_completion,
     typed_error_event,
 )
 from cubeloop.providers.capability import (
@@ -267,6 +269,12 @@ class AnthropicProvider(BaseProvider):
 
                         final_msg = await stream.get_final_message()
                         result = self._convert_response(final_msg, model)
+                        if is_empty_completion(result):
+                            raise EmptyCompletion(
+                                "Model returned an empty completion with no content and no tool calls",
+                                provider=model.provider_id,
+                                model=model.id,
+                            )
                         body = self._assemble_response(final_msg)
                         await self._emit(ms, StreamEvent(type="done"), model)
                         ms.set_result(result)

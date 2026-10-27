@@ -40,7 +40,7 @@ await agent.prompt("Capital of Mongolia?")
 一轮里的策略：
 
 1. **先同模型重试**（默认 3 次重试 / 共 4 次尝试），仅针对瞬时的
-   `RateLimited` 和 `ProviderUnavailable`。会遵守
+   `RateLimited`、`ProviderUnavailable` 与 `EmptyCompletion`。会遵守
    `RateLimited.retry_after`，并受 `max_retry_after`（默认 5s）封顶。
 2. **再 hop** 到下一条。residual `ProviderBadRequest` 和 `ModelNotFound`
    立刻 hop（不同模型重试）——分类漏报「其实是这个模型/网关的问题」比
@@ -59,6 +59,7 @@ await agent.prompt("Capital of Mongolia?")
 |---|---|---|
 | `RateLimited` | 是 | 重试耗尽后 |
 | `ProviderUnavailable` | 是 | 重试耗尽后 |
+| `EmptyCompletion` | 是 | 重试耗尽后 |
 | `ContextLengthExceeded` | 否 | 是，但会跳过 `context_window` 装不下 `tokens_in` 的腿 |
 | `ModelNotFound` | 否 | 是 |
 | `ProviderBadRequest`（其余 4xx） | 否 | 是 |

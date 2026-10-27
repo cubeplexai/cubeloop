@@ -669,6 +669,39 @@ class TestOpenAIStreamError:
                 ms._producer_task.result()
 
     @pytest.mark.asyncio
+    async def test_empty_completion_emits_error(self):
+        """When OpenAI returns stop with no text and no tool calls, emit EmptyCompletion error."""
+        chunks = [
+            _make_chunk(finish_reason="stop", content=""),
+        ]
+
+        with patch("openai.AsyncOpenAI") as mock_openai:
+            mock_client = MagicMock()
+            mock_openai.return_value = mock_client
+            mock_client.chat = MagicMock()
+            mock_client.chat.completions = MagicMock()
+            mock_client.chat.completions.create = AsyncMock(
+                return_value=_async_iter(chunks)
+            )
+
+            provider = OpenAIProvider(api_key="test-key")
+            provider._client = mock_client
+
+            ms = await provider.stream(
+                _model(),
+                [UserMessage(content=[TextContent(text="hi")])],
+            )
+
+            events = [e async for e in ms]
+            result = await ms.result()
+
+            assert result.stop_reason == "error"
+            assert result.error_type == "EmptyCompletion"
+            assert any(
+                e.type == "error" and e.error_type == "EmptyCompletion" for e in events
+            )
+
+    @pytest.mark.asyncio
     async def test_empty_choices_skipped(self):
         """Chunks with no choices should be skipped gracefully."""
         chunks = [

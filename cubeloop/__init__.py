@@ -45,6 +45,8 @@ from cubeloop.providers import (
 from cubeloop.errors import (
     ContentFiltered,
     ContextLengthExceeded,
+    EmptyCompletion,
+    EmptyCompletionError,
     ModelNotFound,
     ProviderAuthFailed,
     ProviderBadRequest,
@@ -108,6 +110,8 @@ __all__ = [
     "BoundModel",
     "CapabilityDescriptor",
     "ContentFiltered",
+    "EmptyCompletion",
+    "EmptyCompletionError",
     "ContinueExecutionRequest",
     "DeliveryError",
     "ContextLengthExceeded",
