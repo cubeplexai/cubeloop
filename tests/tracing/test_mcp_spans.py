@@ -1242,16 +1242,10 @@ class TestLoaderHelpers:
         assert host is None
         assert port is None
 
-    def test_extract_protocol_version(self):
-        from cubeloop.mcp.http_loader import _extract_protocol_version
+    def test_split_address_still_available_for_span_attrs(self):
+        """HTTP loader still exposes address parsing for MCP client spans."""
+        from cubeloop.mcp.http_loader import _split_address
 
-        class FakeInit:
-            protocolVersion = "2025-11-25"
-
-        assert _extract_protocol_version(FakeInit()) == "2025-11-25"
-        assert _extract_protocol_version(object()) is None
-
-        class FakeBadInit:
-            protocolVersion = 123  # not a string
-
-        assert _extract_protocol_version(FakeBadInit()) is None
+        host, port = _split_address("https://mcp.example.com:8443/mcp")
+        assert host == "mcp.example.com"
+        assert port == 8443
