@@ -8,7 +8,11 @@ from contextlib import asynccontextmanager
 from typing import Any, Literal
 
 from cubeloop.mcp._adapter import make_mcp_agent_tool
-from cubeloop.mcp.types import MCPDiscoveryResult, server_info_from_result, tool_info_from_desc
+from cubeloop.mcp.types import (
+    MCPDiscoveryResult,
+    server_info_from_result,
+    tool_info_from_desc,
+)
 
 Transport = Literal["sse", "streamable_http"]
 
@@ -35,7 +39,9 @@ async def _open_client(
             from mcp.client.streamable_http import streamable_http_client
 
             async with httpx2.AsyncClient(headers=headers) as http_client:
-                async with Client(streamable_http_client(server_url, http_client=http_client)) as client:
+                async with Client(
+                    streamable_http_client(server_url, http_client=http_client)
+                ) as client:
                     yield client
         else:
             async with Client(server_url) as client:
@@ -69,8 +75,12 @@ async def load_mcp_tools_http(
     """
 
     async def _call_remote(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
-        async with _open_client(server_url, headers=headers, transport=transport) as client:
-            response = await asyncio.wait_for(client.call_tool(tool_name, args), timeout=timeout)
+        async with _open_client(
+            server_url, headers=headers, transport=transport
+        ) as client:
+            response = await asyncio.wait_for(
+                client.call_tool(tool_name, args), timeout=timeout
+            )
             return _serialize_call_tool_response(response)
 
     async with _open_client(server_url, headers=headers, transport=transport) as client:
@@ -84,7 +94,8 @@ async def load_mcp_tools_http(
         make_mcp_agent_tool(
             name=desc.name,
             description=desc.description or "",
-            input_schema=_field(desc, "input_schema", "inputSchema") or {"type": "object", "properties": {}},
+            input_schema=_field(desc, "input_schema", "inputSchema")
+            or {"type": "object", "properties": {}},
             call_remote=_call_remote,
             server_address=address,
             server_port=port,

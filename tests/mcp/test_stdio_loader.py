@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -42,7 +41,10 @@ async def test_stdio_loader_uses_mcp_v2_client_auto_mode(monkeypatch) -> None:
                     SimpleNamespace(
                         name="echo",
                         description="Echo text",
-                        input_schema={"type": "object", "properties": {"text": {"type": "string"}}},
+                        input_schema={
+                            "type": "object",
+                            "properties": {"text": {"type": "string"}},
+                        },
                         icons=None,
                     )
                 ]
@@ -65,7 +67,9 @@ async def test_stdio_loader_uses_mcp_v2_client_auto_mode(monkeypatch) -> None:
     assert discovery.tools[0].name == "echo"
 
     tool = discovery.tools[0]
-    result = await tool.execute("tc-stdio", tool.parameters(text="hello"), signal=None, on_update=None)
+    result = await tool.execute(
+        "tc-stdio", tool.parameters(text="hello"), signal=None, on_update=None
+    )
     assert clients[1].calls == [("echo", {"text": "hello"})]
     assert result.content[0].text == "hello"
 
@@ -90,7 +94,11 @@ async def test_stdio_loader_preserves_legacy_protocol_version(monkeypatch) -> No
 
         async def list_tools(self):
             return SimpleNamespace(
-                tools=[SimpleNamespace(name="echo", description="", input_schema={}, icons=None)]
+                tools=[
+                    SimpleNamespace(
+                        name="echo", description="", input_schema={}, icons=None
+                    )
+                ]
             )
 
         async def call_tool(self, name, args):

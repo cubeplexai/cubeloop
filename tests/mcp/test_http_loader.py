@@ -13,7 +13,10 @@ class _FakeClient:
     def __init__(self, *, protocol_version: str = "2026-07-28") -> None:
         self.protocol_version = protocol_version
         self.server_info = SimpleNamespace(
-            name="fake-server", version="2.0.0", website_url="https://example.test", icons=None
+            name="fake-server",
+            version="2.0.0",
+            website_url="https://example.test",
+            icons=None,
         )
         self.calls: list[tuple[str, dict[str, object]]] = []
 
@@ -38,7 +41,9 @@ class _FakeClient:
         return SimpleNamespace(
             content=[
                 SimpleNamespace(type="text", text="hello"),
-                SimpleNamespace(type="image", data="base64payload", mime_type="image/png"),
+                SimpleNamespace(
+                    type="image", data="base64payload", mime_type="image/png"
+                ),
             ],
             is_error=False,
             structured_content={"source": "fake"},
@@ -90,7 +95,9 @@ async def test_load_mcp_tools_http_uses_negotiated_v2_client(monkeypatch) -> Non
 
 
 @pytest.mark.asyncio
-async def test_load_mcp_tools_http_preserves_legacy_fallback_protocol(monkeypatch) -> None:
+async def test_load_mcp_tools_http_preserves_legacy_fallback_protocol(
+    monkeypatch,
+) -> None:
     """The loader accepts the legacy protocol selected by MCP Client auto mode."""
     from cubeloop.mcp import load_mcp_tools_http
 
@@ -120,7 +127,10 @@ async def test_load_mcp_tools_http_times_out_tool_calls(monkeypatch) -> None:
     discovery = await load_mcp_tools_http("https://mcp.example/mcp", timeout=0.01)
     with pytest.raises(asyncio.TimeoutError):
         await discovery.tools[0].execute(
-            "tc-timeout", discovery.tools[0].parameters(query="x"), signal=None, on_update=None
+            "tc-timeout",
+            discovery.tools[0].parameters(query="x"),
+            signal=None,
+            on_update=None,
         )
 
 
