@@ -243,6 +243,54 @@ async def test_stream_primary_first_event_error_fallback_succeeds() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stream_primary_second_event_error_fallback_succeeds() -> None:
+    """Primary emits start then error as second event → fallback to second model."""
+
+    class _StartThenErrorProvider(BaseProvider):
+        async def stream(
+            self,
+            model: Model,
+            messages: list[Message],
+            *,
+            system_prompt: str = "",
+            tools: list[ToolDefinition] | None = None,
+            tool_choice: Any = None,
+            options: StreamOptions | None = None,
+        ) -> MessageStream:
+            del messages, system_prompt, tools, tool_choice, options
+            ms = MessageStream()
+            ms.push(StreamEvent(type="start"))
+            ms.push(
+                StreamEvent(
+                    type="error",
+                    error_message="upstream fail",
+                    error_type="ProviderUnavailable",
+                )
+            )
+            ms.set_result(
+                AssistantMessage(
+                    content=[],
+                    stop_reason="error",
+                    error_message="upstream fail",
+                )
+            )
+            return ms
+
+    primary = BoundModel(
+        provider=_StartThenErrorProvider(),
+        spec=Model(id="model-1", provider_id="primary"),
+    )
+    fallback = _faux("fallback", "rescued")
+
+    fbm = FallbackBoundModel(chain=(primary, fallback))
+
+    stream = await fbm.stream(_messages())
+    result = await stream.result()
+
+    assert result.provider_id == "fallback"
+
+
+@pytest.mark.asyncio
 async def test_stream_all_exhausted_raises_provider_unavailable() -> None:
     """All models in chain fail → raises ProviderUnavailable."""
     err = RateLimited("429", provider="p", model="m")
