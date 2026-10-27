@@ -314,3 +314,33 @@ async def _await_with_signal(coro: Awaitable[Any], signal: Any) -> Any:
         except BaseException:
             pass
     return call_task.result()
+
+
+def get_mcp_field(value: object, snake_name: str, camel_name: str) -> Any:
+    """Helper to read attributes supporting both snake_case (v2) and camelCase (v1/wire)."""
+    return getattr(value, snake_name, None) or getattr(value, camel_name, None)
+
+
+def serialize_mcp_call_tool_response(resp: Any) -> dict[str, Any]:
+    """Normalize an MCP SDK CallToolResult (v1 or v2) to the adapter response dict shape."""
+    content: list[dict[str, Any]] = []
+    for block in getattr(resp, "content", None) or []:
+        b_type = getattr(block, "type", None)
+        if b_type == "text":
+            content.append({"type": "text", "text": getattr(block, "text", "")})
+        elif b_type == "image":
+            content.append(
+                {
+                    "type": "image",
+                    "data": getattr(block, "data", ""),
+                    "mimeType": get_mcp_field(block, "mime_type", "mimeType") or "",
+                }
+            )
+    result: dict[str, Any] = {
+        "content": content,
+        "isError": bool(get_mcp_field(resp, "is_error", "isError")),
+    }
+    structured = get_mcp_field(resp, "structured_content", "structuredContent")
+    if structured is not None:
+        result["structuredContent"] = structured
+    return result
