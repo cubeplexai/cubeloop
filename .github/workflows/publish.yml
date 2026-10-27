@@ -3,8 +3,9 @@ name: Publish to PyPI
 # A pushed vX.Y.Z tag is the publish trigger. The GitHub Release is created
 # at the end with GITHUB_TOKEN, which does not start another workflow run.
 # PyPI trusted publishing is also pinned to this file, so both stay here.
-# Creating a Release by hand still runs this workflow; its body is replaced
-# from CHANGELOG.md on the tagged commit.
+# Creating a Release by hand still runs this workflow. The body is replaced
+# from CHANGELOG.md on the tagged commit, and the title is set to
+# "CubeLoop X.Y.Z".
 
 on:
   push:
@@ -125,8 +126,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          # "CubeLoop 0.15.3", matching releases since the rename. The tag stays v0.15.3.
+          release_title="CubeLoop ${RELEASE_TAG#v}"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release edit "$RELEASE_TAG" --notes-file release-notes.md
+            gh release edit "$RELEASE_TAG" --title "$release_title" --notes-file release-notes.md
           else
-            gh release create "$RELEASE_TAG" --verify-tag --notes-file release-notes.md
+            gh release create "$RELEASE_TAG" --verify-tag --title "$release_title" --notes-file release-notes.md
           fi
