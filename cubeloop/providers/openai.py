@@ -12,6 +12,7 @@ from cubeloop.providers.capability import (
     apply_reasoning_control,
     apply_temperature,
 )
+from cubeloop.errors import EmptyCompletion
 from cubeloop.providers.base import (
     AssistantMessage,
     BaseProvider,
@@ -35,6 +36,7 @@ from cubeloop.providers.base import (
     apply_sender_attribution,
     invoke_on_payload,
     invoke_on_response,
+    is_empty_completion,
     typed_error_event,
 )
 from cubeloop.providers.reasoning_profiles import get_capability_profile
@@ -505,6 +507,13 @@ class OpenAIProvider(BaseProvider):
                                 ),
                             }
                         )
+
+                if is_empty_completion(partial):
+                    raise EmptyCompletion(
+                        "Model returned an empty completion with no content and no tool calls",
+                        provider=model.provider_id,
+                        model=model.id,
+                    )
 
                 body = self._assemble_response(
                     response_id=response_id,

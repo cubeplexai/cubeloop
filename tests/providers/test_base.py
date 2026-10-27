@@ -22,6 +22,7 @@ from cubeloop.providers.base import (
     Usage,
     UserMessage,
     format_provider_error,
+    is_empty_completion,
 )
 
 
@@ -211,6 +212,107 @@ class TestMessageStream:
 
         result = await stream.result()
         assert result.stop_reason == "error"
+
+    async def test_stream_subsequent_anext_after_exhaustion(self):
+        stream = MessageStream()
+        stream.push(StreamEvent(type="done"))
+        stream.set_result(AssistantMessage(content=[]))
+
+        events = [ev async for ev in stream]
+        assert len(events) == 1
+        assert events[0].type == "done"
+
+        # Subsequent anext calls must continue to raise StopAsyncIteration without hanging
+        with pytest.raises(StopAsyncIteration):
+            await stream.__anext__()
+        with pytest.raises(StopAsyncIteration):
+            await stream.__anext__()
+
+
+class TestIsEmptyCompletion:
+    def test_empty_content_with_stop(self):
+        msg = AssistantMessage(content=[], stop_reason="stop")
+        assert is_empty_completion(msg) is True
+
+    def test_whitespace_text_content_with_stop(self):
+        msg = AssistantMessage(
+            content=[TextContent(text="   \n\t  ")],
+            stop_reason="stop",
+        )
+        assert is_empty_completion(msg) is True
+
+    def test_thinking_content_with_text_returns_false(self):
+        msg = AssistantMessage(
+            content=[ThinkingContent(thinking="analyzing query...")],
+            stop_reason="stop",
+        )
+        assert is_empty_completion(msg) is False
+
+    def test_thinking_content_empty_or_whitespace_returns_true(self):
+        msg = AssistantMessage(
+            content=[ThinkingContent(thinking="   \n ")],
+            stop_reason="stop",
+        )
+        assert is_empty_completion(msg) is True
+
+    def test_empty_thinking_and_empty_text_with_stop(self):
+        msg = AssistantMessage(
+            content=[
+                ThinkingContent(thinking=""),
+                TextContent(text=""),
+            ],
+            stop_reason="stop",
+        )
+        assert is_empty_completion(msg) is True
+
+    def test_non_empty_text_returns_false(self):
+        msg = AssistantMessage(
+            content=[TextContent(text="Hello world")],
+            stop_reason="stop",
+        )
+        assert is_empty_completion(msg) is False
+
+    def test_thinking_and_non_empty_text_returns_false(self):
+        msg = AssistantMessage(
+            content=[
+                ThinkingContent(thinking="analyzing..."),
+                TextContent(text="Result"),
+            ],
+            stop_reason="stop",
+        )
+        assert is_empty_completion(msg) is False
+
+    def test_tool_call_returns_false(self):
+        msg = AssistantMessage(
+            content=[ToolCall(id="tc-1", name="search", arguments={})],
+            stop_reason="stop",
+        )
+        assert is_empty_completion(msg) is False
+
+    def test_non_stop_stop_reason_returns_false(self):
+        assert (
+            is_empty_completion(AssistantMessage(content=[], stop_reason="tool_use"))
+            is False
+        )
+        assert (
+            is_empty_completion(AssistantMessage(content=[], stop_reason="length"))
+            is False
+        )
+        assert (
+            is_empty_completion(AssistantMessage(content=[], stop_reason="error"))
+            is False
+        )
+        assert (
+            is_empty_completion(AssistantMessage(content=[], stop_reason="aborted"))
+            is False
+        )
+
+    def test_image_content_returns_false(self):
+        msg = AssistantMessage(
+            content=[ImageContent(data="abc", mime_type="image/png")],
+            stop_reason="stop",
+        )
+        assert is_empty_completion(msg) is False
 
 
 class TestMessageStreamTaskTracking:

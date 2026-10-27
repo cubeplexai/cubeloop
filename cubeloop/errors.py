@@ -153,6 +153,17 @@ class ContentFiltered(ProviderBadRequest):
     """Provider refused the request for safety / content-policy reasons."""
 
 
+class EmptyCompletion(ProviderError):
+    """Provider returned a natural stop with no text content and no tool calls.
+
+    Typically caused by an upstream model generation glitch, transient safety
+    filter block, or premature EOS token emission without producing tokens.
+    """
+
+
+EmptyCompletionError = EmptyCompletion
+
+
 # ---------------------------------------------------------------------------
 # Heuristics: turn a raw SDK exception into one of the typed errors above.
 # ---------------------------------------------------------------------------
@@ -475,6 +486,8 @@ def error_from_stream_fields(
         "ProviderBadRequest": ProviderBadRequest,
         "ModelNotFound": ModelNotFound,
         "ContentFiltered": ContentFiltered,
+        "EmptyCompletion": EmptyCompletion,
+        "EmptyCompletionError": EmptyCompletion,
     }
     cls = type_map.get(error_type or "")
     msg = error_message or (error_type or "provider error")
@@ -725,6 +738,8 @@ __all__ = [
     "ProviderBadRequest",
     "ModelNotFound",
     "ContentFiltered",
+    "EmptyCompletion",
+    "EmptyCompletionError",
     "classify_and_raise",
     "classify_string_error",
     "extract_error_code",

@@ -6,6 +6,7 @@ import pytest
 
 from cubeloop.errors import (
     ContextLengthExceeded,
+    EmptyCompletion,
     ProviderAuthFailed,
     ProviderBadRequest,
     ProviderError,
@@ -27,7 +28,11 @@ from cubeloop.providers.base import (
     UserMessage,
 )
 from cubeloop.providers.faux import FauxProvider, faux_assistant_message
-from cubeloop.providers.fallback import DEFAULT_TRIGGER_ERRORS, FallbackBoundModel
+from cubeloop.providers.fallback import (
+    DEFAULT_RETRY_ERRORS,
+    DEFAULT_TRIGGER_ERRORS,
+    FallbackBoundModel,
+)
 
 
 class _RaisingProvider(BaseProvider):
@@ -92,10 +97,66 @@ def test_default_trigger_errors_composition() -> None:
     assert ProviderUnavailable in DEFAULT_TRIGGER_ERRORS
     assert ContextLengthExceeded in DEFAULT_TRIGGER_ERRORS
     assert ProviderBadRequest in DEFAULT_TRIGGER_ERRORS
+    assert EmptyCompletion in DEFAULT_TRIGGER_ERRORS
+    assert EmptyCompletion in DEFAULT_RETRY_ERRORS
     assert ProviderAuthFailed not in DEFAULT_TRIGGER_ERRORS
     from cubeloop.errors import ContentFiltered
 
     assert ContentFiltered not in DEFAULT_TRIGGER_ERRORS
+
+
+class _EmptyCompletionProvider(BaseProvider):
+    def __init__(self, provider_id: str = "empty-prov") -> None:
+        super().__init__()
+        self.provider_id = provider_id
+        self.call_count = 0
+
+    async def stream(
+        self,
+        model: Model,
+        messages: list[Message],
+        *,
+        system_prompt: str = "",
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: Any = None,
+        options: StreamOptions | None = None,
+    ) -> MessageStream:
+        del messages, system_prompt, tools, tool_choice, options
+        self.call_count += 1
+        ms = MessageStream()
+        msg = AssistantMessage(
+            content=[],
+            stop_reason="stop",
+            provider_id=self.provider_id,
+            model_id=model.id,
+        )
+        ms.push(StreamEvent(type="start"))
+        ms.push(StreamEvent(type="done"))
+        ms.set_result(msg)
+        return ms
+
+    async def generate(
+        self,
+        model: Model,
+        messages: list[Message],
+        *,
+        system_prompt: str = "",
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: Any = None,
+        options: StreamOptions | None = None,
+        max_output_tokens: int | None = None,
+        temperature: float | None = None,
+        reasoning: ReasoningControl | None = None,
+    ) -> AssistantMessage:
+        del messages, system_prompt, tools, tool_choice, options
+        del max_output_tokens, temperature, reasoning
+        self.call_count += 1
+        return AssistantMessage(
+            content=[],
+            stop_reason="stop",
+            provider_id=self.provider_id,
+            model_id=model.id,
+        )
 
 
 def test_empty_chain_raises_value_error() -> None:
@@ -306,6 +367,38 @@ async def test_stream_empty_stream_triggers_failover() -> None:
     assert result.provider_id == "fallback"
 
 
+@pytest.mark.asyncio
+async def test_stream_empty_completion_triggers_failover() -> None:
+    """Primary returns empty completion (no content/tools) -> failover to fallback."""
+    empty_prov = _EmptyCompletionProvider("primary")
+    primary = BoundModel(
+        provider=empty_prov, spec=Model(id="model-1", provider_id="primary")
+    )
+    fallback = _faux("fallback", "rescued from empty")
+
+    failover_calls: list[tuple[BoundModel, BoundModel | None, Any]] = []
+
+    async def _cb(failed: BoundModel, nxt: BoundModel | None, err: Any) -> None:
+        failover_calls.append((failed, nxt, err))
+
+    fbm = FallbackBoundModel(
+        chain=(primary, fallback),
+        max_retries_per_model=0,
+        on_failover=_cb,
+    )
+
+    stream = await fbm.stream(_messages())
+    events = [ev.type async for ev in stream]
+    result = await stream.result()
+
+    assert result.provider_id == "fallback"
+    assert "done" in events
+    assert len(failover_calls) == 1
+    assert failover_calls[0][0] is primary
+    assert failover_calls[0][1] is fallback
+    assert isinstance(failover_calls[0][2], EmptyCompletion)
+
+
 class _MidStreamErrorProvider(BaseProvider):
     """Emits one start event then the producer task raises — exercises _forward's except handler."""
 
@@ -383,6 +476,33 @@ async def test_generate_error_assistant_message_triggers_failover() -> None:
 
     assert result.provider_id == "fallback"
     assert result.stop_reason != "error"
+
+
+@pytest.mark.asyncio
+async def test_generate_empty_completion_triggers_failover() -> None:
+    """generate(): Primary returns empty completion -> failover to fallback."""
+    empty_prov = _EmptyCompletionProvider("primary")
+    primary = BoundModel(
+        provider=empty_prov, spec=Model(id="model-1", provider_id="primary")
+    )
+    fallback = _faux("fallback", "generated via fallback")
+
+    failover_calls: list[tuple[BoundModel, BoundModel | None, Any]] = []
+
+    async def _cb(failed: BoundModel, nxt: BoundModel | None, err: Any) -> None:
+        failover_calls.append((failed, nxt, err))
+
+    fbm = FallbackBoundModel(
+        chain=(primary, fallback),
+        max_retries_per_model=0,
+        on_failover=_cb,
+    )
+
+    result = await fbm.generate(_messages())
+
+    assert result.provider_id == "fallback"
+    assert len(failover_calls) == 1
+    assert isinstance(failover_calls[0][2], EmptyCompletion)
 
 
 # ---------------------------------------------------------------------------
@@ -645,6 +765,82 @@ async def test_same_model_retry_recovers_without_secondary() -> None:
     assert fallback.provider.call_count == 0  # type: ignore[attr-defined]
     assert primary_p.calls == 3
     assert retries == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_empty_completion_same_model_retry_recovers() -> None:
+    """Empty completion retries on the same model and recovers if retry succeeds."""
+
+    class _FlakyEmptyProvider(BaseProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.provider_id = "flaky"
+            self.attempts = 0
+
+        async def stream(
+            self,
+            model: Model,
+            messages: list[Message],
+            *,
+            system_prompt: str = "",
+            tools: list[ToolDefinition] | None = None,
+            tool_choice: Any = None,
+            options: StreamOptions | None = None,
+        ) -> MessageStream:
+            del messages, system_prompt, tools, tool_choice, options
+            self.attempts += 1
+            ms = MessageStream()
+            if self.attempts == 1:
+                ms.push(StreamEvent(type="start"))
+                ms.push(StreamEvent(type="done"))
+                ms.set_result(
+                    AssistantMessage(
+                        content=[],
+                        stop_reason="stop",
+                        provider_id="flaky",
+                        model_id=model.id,
+                    )
+                )
+            else:
+                ms.push(StreamEvent(type="start"))
+                ms.push(StreamEvent(type="text_delta", delta="recovered"))
+                ms.push(StreamEvent(type="done"))
+                ms.set_result(
+                    AssistantMessage(
+                        content=[TextContent(text="recovered")],
+                        stop_reason="stop",
+                        provider_id="flaky",
+                        model_id=model.id,
+                    )
+                )
+            return ms
+
+    prov = _FlakyEmptyProvider()
+    bound = BoundModel(provider=prov, spec=Model(id="model-1", provider_id="flaky"))
+    fallback = _faux("fallback", "secondary")
+
+    retry_calls: list[tuple[BoundModel, Any, int, float]] = []
+
+    async def _on_retry(
+        failed: BoundModel, err: Any, attempt: int, wait_s: float
+    ) -> None:
+        retry_calls.append((failed, err, attempt, wait_s))
+
+    fbm = FallbackBoundModel(
+        chain=(bound, fallback),
+        max_retries_per_model=2,
+        retry_backoff=0.0,
+        on_retry=_on_retry,
+    )
+
+    stream = await fbm.stream(_messages())
+    result = await stream.result()
+
+    assert result.provider_id == "flaky"
+    assert prov.attempts == 2
+    assert len(retry_calls) == 1
+    assert isinstance(retry_calls[0][1], EmptyCompletion)
+    assert fallback.provider.call_count == 0  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio

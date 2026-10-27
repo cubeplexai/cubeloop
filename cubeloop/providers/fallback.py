@@ -11,6 +11,7 @@ from typing import Any, Awaitable, Callable
 from cubeloop.errors import (
     ContentFiltered,
     ContextLengthExceeded,
+    EmptyCompletion,
     ProviderBadRequest,
     ProviderError,
     ProviderUnavailable,
@@ -31,6 +32,7 @@ from cubeloop.providers.base import (
     ToolDefinition,
     Usage,
     chain_providers,  # re-exported for back-compat; canonical home is base.py
+    is_empty_completion,
 )
 
 
@@ -38,7 +40,7 @@ _log = logging.getLogger("cubeloop.providers.fallback")
 
 
 DEFAULT_RETRY_ERRORS: frozenset[type[ProviderError]] = frozenset(
-    {RateLimited, ProviderUnavailable}
+    {RateLimited, ProviderUnavailable, EmptyCompletion}
 )
 
 DEFAULT_TRIGGER_ERRORS: frozenset[type[ProviderError]] = frozenset(
@@ -47,6 +49,7 @@ DEFAULT_TRIGGER_ERRORS: frozenset[type[ProviderError]] = frozenset(
         ProviderUnavailable,
         ContextLengthExceeded,
         ProviderBadRequest,
+        EmptyCompletion,
     }
 )
 
@@ -425,20 +428,40 @@ class FallbackBoundModel:
                             "stream ended before producing any events"
                         )
                     else:
+                        buffered_events: list[StreamEvent] = [first]
                         if first.type == "error":
                             err = _typed_from_event(first, bound)
-                        else:
+                        elif first.type == "start":
+                            try:
+                                second = await iterator.__anext__()
+                                buffered_events.append(second)
+                            except StopAsyncIteration:
+                                second = None
+
+                            if second is not None and second.type == "error":
+                                err = _typed_from_event(second, bound)
+                            elif second is not None and second.type == "done":
+                                final_msg = await inner.result()
+                                if is_empty_completion(final_msg):
+                                    err = EmptyCompletion(
+                                        "Model returned an empty completion with no content and no tool calls",
+                                        provider=bound.spec.provider_id,
+                                        model=bound.spec.id,
+                                    )
+
+                        if err is None:
                             self._stick(index)
                             outer = MessageStream()
 
                             async def _forward(
-                                first_ev: StreamEvent = first,
+                                buffered: list[StreamEvent] = buffered_events,
                                 src: Any = iterator,
                                 src_stream: MessageStream = inner,
                                 out: MessageStream = outer,
                             ) -> None:
                                 try:
-                                    out.push(first_ev)
+                                    for ev in buffered:
+                                        out.push(ev)
                                     async for ev in src:
                                         out.push(ev)
                                     out.set_result(await src_stream.result())
@@ -540,6 +563,12 @@ class FallbackBoundModel:
                 else:
                     if result.stop_reason == "error":
                         err = _typed_from_message(result, bound)
+                    elif is_empty_completion(result):
+                        err = EmptyCompletion(
+                            "Model returned an empty completion with no content and no tool calls",
+                            provider=bound.spec.provider_id,
+                            model=bound.spec.id,
+                        )
                     else:
                         self._stick(index)
                         return result

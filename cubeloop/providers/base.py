@@ -301,6 +301,22 @@ def typed_error_event(
     )
 
 
+def is_empty_completion(msg: AssistantMessage) -> bool:
+    """Return True if an assistant message finished with stop but contains no usable output."""
+    if msg.stop_reason != "stop":
+        return False
+    for c in msg.content:
+        if isinstance(c, TextContent) and c.text.strip():
+            return False
+        if isinstance(c, ToolCall):
+            return False
+        if isinstance(c, ThinkingContent) and c.thinking.strip():
+            return False
+        if not isinstance(c, (TextContent, ToolCall, ThinkingContent)):
+            return False
+    return True
+
+
 def format_provider_error(
     exc: BaseException,
     model: "Model",
@@ -339,6 +355,7 @@ class MessageStream:
             asyncio.get_running_loop().create_future()
         )
         self._producer_task: asyncio.Task | None = None
+        self._ended: bool = False
 
     def attach_task(self, task: asyncio.Task) -> None:
         self._producer_task = task
@@ -365,8 +382,11 @@ class MessageStream:
         return self
 
     async def __anext__(self) -> StreamEvent:
+        if self._ended:
+            raise StopAsyncIteration
         item = await self._queue.get()
         if item is None:
+            self._ended = True
             raise StopAsyncIteration
         return item
 

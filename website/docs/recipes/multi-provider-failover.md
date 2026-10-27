@@ -42,8 +42,8 @@ arrives the stream is forwarded as-is — mid-stream errors are not retried.
 Policy in one turn:
 
 1. **Same-model retry** (default 3 retries / 4 attempts) for transient
-   `RateLimited` and `ProviderUnavailable` only. `RateLimited.retry_after` is
-   honoured, capped by `max_retry_after` (default 5s).
+   `RateLimited`, `ProviderUnavailable`, and `EmptyCompletion` only.
+   `RateLimited.retry_after` is honoured, capped by `max_retry_after` (default 5s).
 2. **Then hop** to the next chain entry. Residual `ProviderBadRequest` and
    `ModelNotFound` hop immediately (no same-model retry) — classification
    misses model-specific 400s more often than a true schema bug that fails
@@ -63,6 +63,7 @@ By default **failover** is triggered on:
 |---|---|---|
 | `RateLimited` | Yes | After retries |
 | `ProviderUnavailable` | Yes | After retries |
+| `EmptyCompletion` | Yes | After retries |
 | `ContextLengthExceeded` | No | Yes, but skip legs whose `context_window` cannot fit `tokens_in` |
 | `ModelNotFound` | No | Yes |
 | `ProviderBadRequest` (residual 4xx) | No | Yes |

@@ -5,6 +5,7 @@ import json
 import time
 from typing import Any
 
+from cubeloop.errors import EmptyCompletion
 from cubeloop.providers.base import (
     AssistantMessage,
     BaseProvider,
@@ -28,6 +29,7 @@ from cubeloop.providers.base import (
     apply_sender_attribution,
     invoke_on_payload,
     invoke_on_response,
+    is_empty_completion,
     typed_error_event,
 )
 from cubeloop.providers.capability import (
@@ -521,6 +523,12 @@ class OpenAIResponsesProvider(BaseProvider):
                                 else None,
                             }
                         )
+                        if is_empty_completion(partial):
+                            raise EmptyCompletion(
+                                "Model returned an empty completion with no content and no tool calls",
+                                provider=model.provider_id,
+                                model=model.id,
+                            )
                         await self._emit(ms, StreamEvent(type="done"), model)
                         ms.set_result(partial)
                         return
@@ -554,6 +562,12 @@ class OpenAIResponsesProvider(BaseProvider):
                         raise RuntimeError(error_detail or "Unknown error (no details)")
 
                 # If we get here without response.completed, finalize
+                if is_empty_completion(partial):
+                    raise EmptyCompletion(
+                        "Model returned an empty completion with no content and no tool calls",
+                        provider=model.provider_id,
+                        model=model.id,
+                    )
                 await self._emit(ms, StreamEvent(type="done"), model)
                 ms.set_result(partial)
 

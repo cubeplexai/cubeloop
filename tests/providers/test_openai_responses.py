@@ -745,6 +745,46 @@ class TestStreamError:
             assert result.stop_reason == "error"
             assert "server_error" in (result.error_message or "")
 
+    @pytest.mark.asyncio
+    async def test_empty_completion_emits_error(self):
+        events = [
+            _make_event(
+                "response.completed",
+                response=SimpleNamespace(
+                    status="completed",
+                    usage=None,
+                    id="resp_empty",
+                    error=None,
+                    incomplete_details=None,
+                ),
+            ),
+        ]
+
+        with patch("openai.AsyncOpenAI") as mock_openai:
+            mock_client = MagicMock()
+            mock_openai.return_value = mock_client
+            mock_client.responses = MagicMock()
+            mock_client.responses.create = AsyncMock(return_value=_async_iter(events))
+
+            provider = OpenAIResponsesProvider(api_key="test-key")
+            provider._client = mock_client
+
+            model = _model()
+            ms = await provider.stream(
+                model,
+                [UserMessage(content=[TextContent(text="hi")])],
+            )
+
+            stream_events = [e async for e in ms]
+            result = await ms.result()
+
+            assert result.stop_reason == "error"
+            assert result.error_type == "EmptyCompletion"
+            assert any(
+                e.type == "error" and e.error_type == "EmptyCompletion"
+                for e in stream_events
+            )
+
 
 class TestReasoningParams:
     """Test that reasoning parameters are correctly configured."""
