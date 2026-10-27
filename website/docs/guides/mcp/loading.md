@@ -17,7 +17,11 @@ Install the extra:
 pip install "cubeloop[mcp]"
 ```
 
-This pulls in the `mcp` SDK.
+This pulls in the MCP Python SDK v2 (`mcp>=2,<3`).
+
+CubeLoop's loaders use the SDK's high-level `Client` in auto mode: they try
+the MCP 2026-07-28 (`server/discover`) path first, then fall back to the
+legacy `initialize` handshake when the server only speaks an older revision.
 
 ## stdio transport: local subprocess
 
@@ -63,25 +67,35 @@ Arguments:
 | `args` | argv for the server |
 | `env` | Environment variables (optional) |
 | `cwd` | Working directory (optional) |
-| `timeout` | Per-call wall-clock timeout for `initialize` / `list` / `call` |
+| `timeout` | Per-call wall-clock timeout for `list` / `call` |
 
-## HTTP/SSE transport: remote server
+## HTTP transport: remote server
 
 For hosted MCP servers (Sentry, GitHub, internal services):
 
 ```python
 from cubeloop.mcp import load_mcp_tools_http
 
+# Default transport is legacy SSE.
 tools = await load_mcp_tools_http(
     server_url="https://mcp.example.com/sse",
     headers={"Authorization": "Bearer <token>"},
     timeout=30.0,
 )
+
+# Prefer Streamable HTTP for MCP 2026-07-28 servers.
+tools = await load_mcp_tools_http(
+    server_url="https://mcp.example.com/mcp",
+    headers={"Authorization": "Bearer <token>"},
+    transport="streamable_http",
+)
 ```
 
-`load_mcp_tools_http` uses the MCP SDK's SSE client. Same model as
-stdio: one connection to enumerate, then a fresh connection per tool
-call.
+`load_mcp_tools_http` supports `transport="sse"` (default) and
+`transport="streamable_http"`. Same model as stdio: one connection to
+enumerate, then a fresh connection per tool call. On the modern protocol
+the SDK stamps the required routing headers (`MCP-Protocol-Version`,
+`Mcp-Method`, `Mcp-Name`) itself.
 
 See [MCP Auth](./auth) for the auth patterns you'll likely need with
 HTTP servers.

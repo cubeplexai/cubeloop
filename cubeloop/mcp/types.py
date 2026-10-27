@@ -100,25 +100,34 @@ def icons_from_raw(raws: object) -> tuple[MCPIcon, ...]:
     return tuple(out)
 
 
-def server_info_from_init_result(init_result: object) -> MCPServerInfo | None:
-    """Extract ``MCPServerInfo`` from an ``InitializeResult`` (or duck-type).
+def server_info_from_result(server: object | None) -> MCPServerInfo | None:
+    """Extract ``MCPServerInfo`` from a v2 client ``server_info`` result.
 
-    Returns ``None`` when ``serverInfo`` is absent or missing the required
-    ``name``.
+    MCP Python SDK v2 exposes the server implementation directly and uses
+    snake_case attributes, while a legacy handshake result wraps it in
+    ``serverInfo``.  Supporting both shapes keeps this value useful when a
+    client negotiates down to the pre-2026 protocol.
     """
-    server = getattr(init_result, "serverInfo", None)
     if server is None:
         return None
+    nested = getattr(server, "serverInfo", None)
+    if nested is not None:
+        server = nested
     name = getattr(server, "name", None)
     if not name:
         return None
     return MCPServerInfo(
         name=name,
         version=getattr(server, "version", "") or "",
-        website_url=getattr(server, "websiteUrl", None)
-        or getattr(server, "website_url", None),
+        website_url=getattr(server, "website_url", None)
+        or getattr(server, "websiteUrl", None),
         icons=icons_from_raw(getattr(server, "icons", None)),
     )
+
+
+def server_info_from_init_result(init_result: object) -> MCPServerInfo | None:
+    """Backward-compatible alias for legacy callers/tests."""
+    return server_info_from_result(init_result)
 
 
 def tool_info_from_desc(desc: object) -> MCPToolInfo:

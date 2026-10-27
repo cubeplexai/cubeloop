@@ -1,112 +1,55 @@
-"""HTTP/SSE transport MCP tool loader."""
+"""HTTP transport MCP tool loader."""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import timedelta
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 from cubeloop.mcp._adapter import make_mcp_agent_tool
-from cubeloop.mcp.types import (
-    MCPDiscoveryResult,
-    server_info_from_init_result,
-    tool_info_from_desc,
-)
+from cubeloop.mcp.types import MCPDiscoveryResult, server_info_from_result, tool_info_from_desc
 
 Transport = Literal["sse", "streamable_http"]
 
 
 @asynccontextmanager
-async def _open_session(
+async def _open_client(
     server_url: str,
     *,
     headers: dict[str, str] | None,
-    timeout: float,
     transport: Transport,
-) -> AsyncIterator[tuple[Any, Callable[[], str | None]]]:
-    """Open an MCP ClientSession over the requested transport.
+) -> AsyncIterator[Any]:
+    """Open an MCP v2 client over the requested transport.
 
-    Yields ``(session, get_session_id)``:
-
-    - ``session`` is the live ``ClientSession``.
-    - ``get_session_id()`` returns the current MCP session id for the
-      Streamable HTTP transport (``mcp.session.id`` per the GenAI MCP
-      semconv), or ``None`` for SSE (which has no session-id concept).
-      Callers use this to stamp ``mcp.session.id`` onto the CLIENT
-      span inside ``_call_remote`` rather than at loader time —
-      loader-time stamping was impossible because each call opens a
-      fresh session with its own id (codex overall-review MINOR).
+    ``Client`` negotiates protocol version ``2026-07-28`` by probing
+    ``server/discover`` and automatically falls back to ``initialize`` for
+    pre-v2 servers.  The v2 Streamable HTTP transport stamps the protocol and
+    routing headers itself, so callers must not synthesize them.
     """
-    from mcp import ClientSession
+    from mcp import Client
 
     if transport == "streamable_http":
-        from mcp.client.streamable_http import streamablehttp_client
+        if headers:
+            import httpx2
+            from mcp.client.streamable_http import streamable_http_client
 
-        # streamablehttp_client's timeout signature drifted across mcp SDK
-        # versions: 1.8/1.9-era releases required ``timedelta`` and called
-        # ``.total_seconds()`` internally, while ~1.10+ accepts ``float |
-        # timedelta``. Passing a ``timedelta`` works on every version we
-        # declare in our ``mcp>=1.0`` floor, so we always convert here.
-        timeout_td = timedelta(seconds=timeout)
-        async with streamablehttp_client(
-            server_url,
-            headers=headers,
-            timeout=timeout_td,
-            sse_read_timeout=timeout_td,
-        ) as (read_stream, write_stream, get_session_id):
-            async with ClientSession(read_stream, write_stream) as session:
-                yield session, get_session_id
+            async with httpx2.AsyncClient(headers=headers) as http_client:
+                async with Client(streamable_http_client(server_url, http_client=http_client)) as client:
+                    yield client
+        else:
+            async with Client(server_url) as client:
+                yield client
         return
 
     if transport == "sse":
         from mcp.client.sse import sse_client
 
-        async with sse_client(
-            server_url,
-            headers=headers,
-            timeout=timeout,
-            sse_read_timeout=timeout,
-        ) as (read_stream, write_stream):
-            async with ClientSession(read_stream, write_stream) as session:
-                yield session, _no_session_id
+        async with Client(sse_client(server_url, headers=headers)) as client:
+            yield client
         return
 
     raise ValueError(f"unsupported MCP transport '{transport}'")
-
-
-def _no_session_id() -> str | None:
-    """SSE transport has no MCP session id; this stub yields ``None``
-    so callers can treat both transports uniformly."""
-    return None
-
-
-def _stamp_session_id(session_id: str | None) -> None:
-    """Attach ``mcp.session.id`` to the current OTel span if both the
-    id and ``opentelemetry`` are present.
-
-    The CLIENT span was opened by ``cubeloop.mcp._adapter._execute``
-    via ``mcp_client_span``; ``use_span`` makes it the current span
-    while ``call_remote`` runs, so reading ``get_current_span()``
-    inside the loader's call path resolves to the right span. No-op
-    when OTel isn't installed or the loader is called outside an
-    active span context.
-    """
-    if not session_id:
-        return
-    try:
-        from opentelemetry import trace as _otel_trace
-    except ImportError:
-        return
-    span = _otel_trace.get_current_span()
-    ctx = span.get_span_context()
-    if not getattr(ctx, "is_valid", False):
-        return
-    try:
-        span.set_attribute("mcp.session.id", str(session_id))
-    except Exception:
-        pass
 
 
 async def load_mcp_tools_http(
@@ -116,79 +59,32 @@ async def load_mcp_tools_http(
     timeout: float = 30.0,
     transport: Transport = "sse",
 ) -> MCPDiscoveryResult:
-    """Connect to an HTTP MCP server and discover its tools + metadata.
+    """Connect to an MCP server and discover executable tools.
 
-    Returns a :class:`MCPDiscoveryResult` carrying:
-
-    - ``tools`` — executable ``AgentTool`` per ``tools/list`` entry.
-    - ``server`` — ``MCPServerInfo`` (name, version, websiteUrl, icons)
-      captured from the ``initialize`` handshake's ``serverInfo``. Sourced
-      from MCP spec rev 2025-11-25's ``Implementation`` shape.
-    - ``tool_infos`` — per-tool display metadata (currently ``icons``)
-      captured from each ``tools/list`` entry, separated from
-      ``AgentTool`` so callers can render visuals without coupling
-      core types to display concerns.
-
-    ``transport`` picks the wire format:
-
-    - ``"sse"`` (default) — legacy SSE-over-GET transport (``sse_client``).
-    - ``"streamable_http"`` — newer SSE-over-POST transport
-      (``streamablehttp_client``).
-
-    Each returned tool's execute method invokes ``tools/call`` against a
-    fresh session — v1 simplicity, no pooling. The session is opened over
-    the same transport that was used for discovery, so the call path
-    cannot accidentally regress to the wrong wire format.
-
-    The transport's own timeout bounds the connection; we additionally
-    wrap initialize/list/call awaits in ``asyncio.wait_for`` so a server
-    that accepts the connection but stalls on protocol messages still
-    aborts.
+    Supports both the stateless MCP 2026-07-28 protocol and legacy servers.
+    MCP SDK v2 performs protocol negotiation; in auto mode it uses
+    ``server/discover`` for modern servers and falls back to ``initialize``.
+    Each returned tool opens a fresh client for invocation, matching the
+    loader's previous no-pooling behaviour.
     """
 
     async def _call_remote(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
-        # When an MCP CLIENT span is current (cubeloop.mcp._adapter wraps
-        # this call in ``mcp_client_span``), propagate the W3C
-        # ``traceparent`` header so an instrumented MCP server can
-        # continue the trace. The helper returns None when no recording
-        # span is active or OTel isn't installed; merge so caller-
-        # supplied headers aren't clobbered.
-        from cubeloop.mcp._tracing import current_traceparent
+        async with _open_client(server_url, headers=headers, transport=transport) as client:
+            response = await asyncio.wait_for(client.call_tool(tool_name, args), timeout=timeout)
+            return _serialize_call_tool_response(response)
 
-        call_headers = headers
-        tp = current_traceparent()
-        if tp is not None:
-            call_headers = {**(headers or {}), "traceparent": tp}
-
-        async with _open_session(
-            server_url, headers=call_headers, timeout=timeout, transport=transport
-        ) as (session, get_session_id):
-            await asyncio.wait_for(session.initialize(), timeout=timeout)
-            # Stamp mcp.session.id on the active CLIENT span (the one
-            # opened by _adapter._execute via ``mcp_client_span``).
-            # Per-call session id can only be read after initialize().
-            _stamp_session_id(get_session_id())
-            resp = await asyncio.wait_for(
-                session.call_tool(tool_name, args), timeout=timeout
-            )
-            return _serialize_call_tool_response(resp)
-
-    async with _open_session(
-        server_url, headers=headers, timeout=timeout, transport=transport
-    ) as (session, _get_session_id):
-        init_result = await asyncio.wait_for(session.initialize(), timeout=timeout)
-        tools_resp = await asyncio.wait_for(session.list_tools(), timeout=timeout)
+    async with _open_client(server_url, headers=headers, transport=transport) as client:
+        tools_resp = await asyncio.wait_for(client.list_tools(), timeout=timeout)
         tool_descs = tools_resp.tools
+        protocol_version = client.protocol_version
+        server_info = client.server_info
 
-    # Trace attribute sources for the CLIENT spans emitted per call.
     address, port = _split_address(server_url)
-    protocol_version = _extract_protocol_version(init_result)
-
     tools = [
         make_mcp_agent_tool(
             name=desc.name,
             description=desc.description or "",
-            input_schema=desc.inputSchema or {"type": "object", "properties": {}},
+            input_schema=_field(desc, "input_schema", "inputSchema") or {"type": "object", "properties": {}},
             call_remote=_call_remote,
             server_address=address,
             server_port=port,
@@ -196,19 +92,18 @@ async def load_mcp_tools_http(
         )
         for desc in tool_descs
     ]
-    tool_infos = [tool_info_from_desc(desc) for desc in tool_descs]
     return MCPDiscoveryResult(
         tools=tools,
-        server=server_info_from_init_result(init_result),
-        tool_infos=tool_infos,
+        server=server_info_from_result(server_info),
+        tool_infos=[tool_info_from_desc(desc) for desc in tool_descs],
     )
 
 
+def _field(value: object, snake_name: str, camel_name: str) -> Any:
+    return getattr(value, snake_name, None) or getattr(value, camel_name, None)
+
+
 def _split_address(server_url: str) -> tuple[str | None, int | None]:
-    """Extract ``(host, port)`` from a server URL for the
-    ``server.address`` / ``server.port`` span attributes. Returns
-    ``(None, None)`` on parse failure.
-    """
     try:
         from urllib.parse import urlparse
 
@@ -218,44 +113,25 @@ def _split_address(server_url: str) -> tuple[str | None, int | None]:
         return None, None
 
 
-def _extract_protocol_version(init_result: Any) -> str | None:
-    """Read ``protocolVersion`` off the MCP SDK initialize() result.
-
-    The SDK exposes it as ``init_result.protocolVersion``. Defensive
-    against future shape changes.
-    """
-    value = getattr(init_result, "protocolVersion", None)
-    if isinstance(value, str):
-        return value
-    return None
-
-
 def _serialize_call_tool_response(resp: Any) -> dict[str, Any]:
-    """Normalize mcp SDK CallToolResult → dict for adapter.
-
-    Preserves text and image content blocks plus the optional
-    ``structuredContent`` field. Unknown block types are dropped (after
-    being surfaced once the agent loop has a place to put them).
-    """
+    """Normalize a v2 ``CallToolResult`` to the adapter response shape."""
     content: list[dict[str, Any]] = []
-    for c in resp.content or []:
-        ctype = getattr(c, "type", None)
-        if ctype == "text":
-            content.append({"type": "text", "text": c.text})
-        elif ctype == "image":
+    for block in resp.content or []:
+        if block.type == "text":
+            content.append({"type": "text", "text": block.text})
+        elif block.type == "image":
             content.append(
                 {
                     "type": "image",
-                    "data": getattr(c, "data", ""),
-                    "mimeType": getattr(c, "mimeType", "")
-                    or getattr(c, "media_type", ""),
+                    "data": getattr(block, "data", ""),
+                    "mimeType": _field(block, "mime_type", "mimeType") or "",
                 }
             )
-    out: dict[str, Any] = {
+    result: dict[str, Any] = {
         "content": content,
-        "isError": bool(getattr(resp, "isError", False)),
+        "isError": bool(_field(resp, "is_error", "isError")),
     }
-    structured = getattr(resp, "structuredContent", None)
+    structured = _field(resp, "structured_content", "structuredContent")
     if structured is not None:
-        out["structuredContent"] = structured
-    return out
+        result["structuredContent"] = structured
+    return result
