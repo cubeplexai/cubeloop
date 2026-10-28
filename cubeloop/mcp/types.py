@@ -110,9 +110,19 @@ def server_info_from_result(server: object | None) -> MCPServerInfo | None:
     """
     if server is None:
         return None
-    nested = getattr(server, "serverInfo", None)
-    if nested is not None:
-        server = nested
+    # v2 Client.server_info is the Implementation itself (name/version).
+    # A legacy InitializeResult wraps that object as server_info / serverInfo.
+    # Descend only when the wrapper declares the field; an Implementation does
+    # not, and getattr's default would otherwise hand the object back to itself.
+    declared = set(getattr(server, "__dict__", {}))
+    declared.update(getattr(type(server), "model_fields", {}))
+    for field_name in ("server_info", "serverInfo"):
+        if field_name not in declared:
+            continue
+        nested = getattr(server, field_name, None)
+        if nested is not None:
+            server = nested
+        break
     name = getattr(server, "name", None)
     if not name:
         return None

@@ -9,6 +9,7 @@ context manager is a no-op (verified separately).
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
@@ -362,6 +363,78 @@ class TestTraceparentInjection:
         # Format: 00-<32hex>-<16hex>-<flags>
         tp = seen_headers[0]["traceparent"]
         assert tp.startswith("00-") and len(tp.split("-")) == 4
+
+    async def test_http_loader_forwards_traceparent_on_tool_call(self, monkeypatch):
+        """The real HTTP loader, not a copied helper, must stamp traceparent."""
+        from cubeloop.mcp import http_loader, load_mcp_tools_http
+        from cubeloop.mcp._tracing import mcp_client_span
+
+        provider, _exporter = _make_provider()
+        _patch_mcp_trace(monkeypatch, provider)
+
+        seen_headers: list[dict | None] = []
+
+        class _Client:
+            protocol_version = "2026-07-28"
+            server_info = None
+
+            async def list_tools(self):
+                return type(
+                    "Resp",
+                    (),
+                    {
+                        "tools": [
+                            type(
+                                "Tool",
+                                (),
+                                {
+                                    "name": "search",
+                                    "description": "Search",
+                                    "input_schema": {
+                                        "type": "object",
+                                        "properties": {"q": {"type": "string"}},
+                                    },
+                                    "icons": None,
+                                },
+                            )()
+                        ]
+                    },
+                )()
+
+            async def call_tool(self, name, args):
+                return type(
+                    "Call",
+                    (),
+                    {
+                        "content": [
+                            type("Block", (), {"type": "text", "text": "ok"})()
+                        ],
+                        "is_error": False,
+                        "structured_content": None,
+                    },
+                )()
+
+        @asynccontextmanager
+        async def fake_open_client(*args, **kwargs):
+            seen_headers.append(kwargs.get("headers"))
+            yield _Client()
+
+        monkeypatch.setattr(http_loader, "_open_client", fake_open_client)
+        discovery = await load_mcp_tools_http(
+            "https://mcp.example/mcp",
+            headers={"x-test": "yes"},
+        )
+        async with mcp_client_span(method="tools/call", tool_name="search"):
+            await discovery.tools[0].execute(
+                "tc-trace",
+                discovery.tools[0].parameters(q="cats"),
+                signal=None,
+                on_update=None,
+            )
+
+        assert seen_headers[0] == {"x-test": "yes"}
+        assert seen_headers[1]["x-test"] == "yes"
+        assert seen_headers[1]["traceparent"].startswith("00-")
 
     async def test_no_header_added_when_no_active_span(self, monkeypatch):
         from cubeloop.mcp._tracing import current_traceparent
