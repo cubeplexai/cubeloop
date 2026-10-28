@@ -317,8 +317,16 @@ async def _await_with_signal(coro: Awaitable[Any], signal: Any) -> Any:
 
 
 def get_mcp_field(value: object, snake_name: str, camel_name: str) -> Any:
-    """Helper to read attributes supporting both snake_case (v2) and camelCase (v1/wire)."""
-    return getattr(value, snake_name, None) or getattr(value, camel_name, None)
+    """Read an attribute that may be snake_case (v2) or camelCase (v1/wire).
+
+    ``None`` means the attribute is absent. Falsy values such as ``{}``,
+    ``[]``, ``0``, and ``False`` are real payload and must not fall through.
+    """
+    if hasattr(value, snake_name):
+        snake_value = getattr(value, snake_name)
+        if snake_value is not None:
+            return snake_value
+    return getattr(value, camel_name, None)
 
 
 def serialize_mcp_call_tool_response(resp: Any) -> dict[str, Any]:

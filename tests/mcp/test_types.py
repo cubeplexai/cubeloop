@@ -108,6 +108,25 @@ def test_server_info_captures_all_fields() -> None:
     )
 
 
+def test_server_info_reads_v2_snake_case_server_info() -> None:
+    """SDK v2 InitializeResult nests the implementation under server_info."""
+    init = SimpleNamespace(
+        server_info=SimpleNamespace(
+            name="v2-server",
+            version="2.3.0",
+            website_url="https://example.test",
+            icons=None,
+        )
+    )
+    info = server_info_from_init_result(init)
+    assert info == MCPServerInfo(
+        name="v2-server",
+        version="2.3.0",
+        website_url="https://example.test",
+        icons=(),
+    )
+
+
 def test_tool_info_from_desc_handles_missing_icons() -> None:
     desc = SimpleNamespace(name="search", icons=None)
     assert tool_info_from_desc(desc) == MCPToolInfo(name="search", icons=())

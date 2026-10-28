@@ -162,13 +162,35 @@ async def test_open_client_streamable_http_branches(monkeypatch) -> None:
     import mcp
     import mcp.client.streamable_http
 
+    seen_clients: list[object] = []
+
+    class _FakeHttpClient:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+            self.closed = False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            self.closed = True
+
+    def fake_create_mcp_http_client(**kwargs: object) -> _FakeHttpClient:
+        client = _FakeHttpClient(**kwargs)
+        seen_clients.append(client)
+        return client
+
     @asynccontextmanager
     async def fake_streamable(url, http_client=None):
-        yield "streamable_stream"
+        yield http_client
 
     monkeypatch.setattr(mcp, "Client", DummyClient)
     monkeypatch.setattr(
         mcp.client.streamable_http, "streamable_http_client", fake_streamable
+    )
+    monkeypatch.setattr(
+        "mcp.shared._httpx_utils.create_mcp_http_client",
+        fake_create_mcp_http_client,
     )
 
     # Test with headers
@@ -179,6 +201,10 @@ async def test_open_client_streamable_http_branches(monkeypatch) -> None:
         transport="streamable_http",
     ) as client:
         assert isinstance(client, DummyClient)
+        assert seen_clients[-1].kwargs["headers"] == {"Authorization": "Bearer test"}
+        assert seen_clients[-1].closed is False
+
+    assert seen_clients[-1].closed is True
 
     # Test without headers
     async with _open_client(
@@ -188,6 +214,9 @@ async def test_open_client_streamable_http_branches(monkeypatch) -> None:
         transport="streamable_http",
     ) as client:
         assert isinstance(client, DummyClient)
+        assert seen_clients[-1].kwargs["headers"] is None
+
+    assert seen_clients[-1].closed is True
 
 
 @pytest.mark.asyncio

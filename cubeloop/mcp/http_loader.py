@@ -43,14 +43,19 @@ async def _open_client(
         from mcp.client.streamable_http import streamable_http_client
         from mcp.shared._httpx_utils import create_mcp_http_client
 
-        http_client = create_mcp_http_client(
+        # streamable_http_client has no headers/timeout kwargs. A caller-supplied
+        # client is not closed by the SDK (client_provided=True), so this loader
+        # owns the AsyncClient lifecycle. create_mcp_http_client lives in a
+        # private module because that is the SDK's supported factory for the
+        # transport's default timeout and redirect behaviour.
+        async with create_mcp_http_client(
             headers=headers,
             timeout=httpx2.Timeout(timeout),
-        )
-        async with Client(
-            streamable_http_client(server_url, http_client=http_client)
-        ) as client:
-            yield client
+        ) as http_client:
+            async with Client(
+                streamable_http_client(server_url, http_client=http_client)
+            ) as client:
+                yield client
         return
 
     if transport == "sse":
@@ -89,9 +94,19 @@ async def load_mcp_tools_http(
     """
 
     async def _call_remote(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        from cubeloop.mcp._tracing import current_traceparent
+
+        call_headers = headers
+        traceparent = current_traceparent()
+        if traceparent is not None:
+            call_headers = {**(headers or {}), "traceparent": traceparent}
+
         async with asyncio.timeout(timeout):
             async with _open_client(
-                server_url, headers=headers, timeout=timeout, transport=transport
+                server_url,
+                headers=call_headers,
+                timeout=timeout,
+                transport=transport,
             ) as client:
                 response = await client.call_tool(tool_name, args)
                 return serialize_mcp_call_tool_response(response)
