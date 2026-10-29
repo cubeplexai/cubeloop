@@ -86,6 +86,41 @@ tools = await load_mcp_tools_http(
 
 HTTP 服务器常用的认证模式参见 [MCP 认证](./auth)。
 
+## 缓存的工具描述
+
+会持久化 `tools/list`（这样后续发送不必重新发现）的宿主，可以从缓存的 JSON Schema 重建 `AgentTool`：
+
+```python
+from cubeloop.mcp import (
+    make_mcp_agent_tool,
+    open_mcp_http_client,
+    serialize_mcp_call_tool_response,
+)
+
+async def call_remote(tool_name, args):
+    async with open_mcp_http_client(
+        server_url,
+        headers=headers,
+        timeout=30.0,
+        transport="streamable_http",
+    ) as client:
+        response = await client.call_tool(tool_name, args)
+        return serialize_mcp_call_tool_response(response)
+
+tool = make_mcp_agent_tool(
+    name=cached["name"],
+    description=cached["description"],
+    input_schema=cached["input_schema"],
+    call_remote=call_remote,
+)
+```
+
+`open_mcp_http_client` 与加载器使用同一个 auto 模式 `Client`：先探测 `server/discover`，再回退到 `initialize`。不要自己调用 `initialize()`。
+
+当 CubeLoop 的 MCP CLIENT span 处于活动状态时（`make_mcp_agent_tool` 生成的每个工具都会在 `call_remote` 外包一层），opener 会写入 W3C `traceparent` 请求头，以便已埋点的服务器继续这条追踪。宿主不应导入 `cubeloop.mcp._tracing`。
+
+OAuth 刷新、401 重试以及缓存 JSON 的形状仍由宿主负责。token 生命周期很短时，传入每次调用都重新取 token 的 `call_remote`——参见 [MCP 认证](./auth)。
+
 ## 返回值说明
 
 返回列表中的每个元素都是一个 `AgentTool`：
@@ -148,7 +183,7 @@ CubeLoop 每次 `execute` 调用都会建立新的传输连接。这样做：
 
 - [MCP 认证](./auth) —— Bearer token、请求头、基于环境变量的凭据。
 - [工具使用](../agents/tool-use) —— 工具（MCP 或其他）的分发机制。
-- [`make_mcp_agent_tool` 源码](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/mcp/_adapter.py) —— schema → Pydantic 适配器，如需自定义可参考。
+- [`make_mcp_agent_tool`](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/mcp/_adapter.py) —— 从 `cubeloop.mcp` 导出；schema → Pydantic 适配器，用于从缓存描述重建工具。
 - [延迟工具组](../middleware/deferred-tools) —— 把 MCP schema 从 system
   prompt 里藏起来，让模型按需展开。当多个 MCP server 加起来构成一个
   上下文沉重的工具集时很有用。

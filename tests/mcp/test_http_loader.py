@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cubeloop.mcp.http_loader import _open_client
+from cubeloop.mcp.http_loader import _open_client, open_mcp_http_client
 
 
 class _FakeClient:
@@ -63,7 +63,7 @@ def _install_fake_client(monkeypatch, *, protocol_version: str = "2026-07-28"):
         clients.append(client)
         yield client
 
-    monkeypatch.setattr(http_loader, "_open_client", fake_open_client)
+    monkeypatch.setattr(http_loader, "open_mcp_http_client", fake_open_client)
     return clients
 
 
@@ -71,6 +71,19 @@ def test_import_http_loader() -> None:
     from cubeloop.mcp import load_mcp_tools_http
 
     assert callable(load_mcp_tools_http)
+
+
+def test_mcp_package_exports_cached_descriptor_primitives() -> None:
+    from cubeloop import mcp
+
+    assert mcp.open_mcp_http_client is open_mcp_http_client
+    assert callable(mcp.make_mcp_agent_tool)
+    assert callable(mcp.serialize_mcp_call_tool_response)
+    assert "open_mcp_http_client" in mcp.__all__
+    assert "make_mcp_agent_tool" in mcp.__all__
+    assert "serialize_mcp_call_tool_response" in mcp.__all__
+    # CubePlex #703 imported the private name from http_loader.
+    assert _open_client is open_mcp_http_client
 
 
 @pytest.mark.asyncio
@@ -125,7 +138,7 @@ async def test_load_mcp_tools_http_times_out_tool_calls(monkeypatch) -> None:
     async def fake_open_client(*args, **kwargs):
         yield _SlowClient()
 
-    monkeypatch.setattr(http_loader, "_open_client", fake_open_client)
+    monkeypatch.setattr(http_loader, "open_mcp_http_client", fake_open_client)
     discovery = await load_mcp_tools_http("https://mcp.example/mcp", timeout=0.01)
     with pytest.raises(TimeoutError):
         await discovery.tools[0].execute(
@@ -146,7 +159,7 @@ async def test_load_mcp_tools_http_rejects_unknown_transport() -> None:
 
 @pytest.mark.asyncio
 async def test_open_client_streamable_http_branches(monkeypatch) -> None:
-    """Directly test _open_client with streamable_http transport to ensure lines are covered."""
+    """Directly test open_mcp_http_client with streamable_http transport."""
     captured_init = []
 
     class DummyClient:
@@ -194,7 +207,7 @@ async def test_open_client_streamable_http_branches(monkeypatch) -> None:
     )
 
     # Test with headers
-    async with _open_client(
+    async with open_mcp_http_client(
         "https://mcp.example/mcp",
         headers={"Authorization": "Bearer test"},
         timeout=15.0,
@@ -207,7 +220,7 @@ async def test_open_client_streamable_http_branches(monkeypatch) -> None:
     assert seen_clients[-1].closed is True
 
     # Test without headers
-    async with _open_client(
+    async with open_mcp_http_client(
         "https://mcp.example/mcp",
         headers=None,
         timeout=15.0,
@@ -221,7 +234,7 @@ async def test_open_client_streamable_http_branches(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_open_client_sse_branch(monkeypatch) -> None:
-    """Directly test _open_client with sse transport."""
+    """Directly test open_mcp_http_client with sse transport."""
     captured_init = []
 
     class DummyClient:
@@ -244,10 +257,128 @@ async def test_open_client_sse_branch(monkeypatch) -> None:
     monkeypatch.setattr(mcp, "Client", DummyClient)
     monkeypatch.setattr(mcp.client.sse, "sse_client", fake_sse)
 
-    async with _open_client(
+    async with open_mcp_http_client(
         "https://mcp.example/sse",
         headers={"x-test": "1"},
         timeout=20.0,
         transport="sse",
     ) as client:
         assert isinstance(client, DummyClient)
+
+
+_FAKE_TRACEPARENT = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
+
+
+def _patch_traceparent(monkeypatch, value: str | None) -> None:
+    from cubeloop.mcp import _tracing as mcp_tracing
+
+    monkeypatch.setattr(mcp_tracing, "current_traceparent", lambda: value)
+
+
+class _DummyMcpClient:
+    def __init__(self, transport_or_url) -> None:
+        del transport_or_url
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_open_mcp_http_client_stamps_traceparent_on_streamable_http(
+    monkeypatch,
+) -> None:
+    """Opener stamps W3C traceparent without mutating the caller's headers dict."""
+    import mcp
+    import mcp.client.streamable_http
+
+    captured_headers: list[object] = []
+    caller_headers = {"Authorization": "Bearer test"}
+
+    class _FakeHttpClient:
+        def __init__(self, **kwargs: object) -> None:
+            captured_headers.append(kwargs.get("headers"))
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            pass
+
+    def fake_create_mcp_http_client(**kwargs: object) -> _FakeHttpClient:
+        return _FakeHttpClient(**kwargs)
+
+    @asynccontextmanager
+    async def fake_streamable(url, http_client=None):
+        yield http_client
+
+    monkeypatch.setattr(mcp, "Client", _DummyMcpClient)
+    monkeypatch.setattr(
+        mcp.client.streamable_http, "streamable_http_client", fake_streamable
+    )
+    monkeypatch.setattr(
+        "mcp.shared._httpx_utils.create_mcp_http_client",
+        fake_create_mcp_http_client,
+    )
+    _patch_traceparent(monkeypatch, _FAKE_TRACEPARENT)
+
+    async with open_mcp_http_client(
+        "https://mcp.example/mcp",
+        headers=caller_headers,
+        timeout=15.0,
+        transport="streamable_http",
+    ):
+        pass
+
+    async with open_mcp_http_client(
+        "https://mcp.example/mcp",
+        headers=None,
+        timeout=15.0,
+        transport="streamable_http",
+    ):
+        pass
+
+    assert captured_headers == [
+        {
+            "Authorization": "Bearer test",
+            "traceparent": _FAKE_TRACEPARENT,
+        },
+        {"traceparent": _FAKE_TRACEPARENT},
+    ]
+    assert caller_headers == {"Authorization": "Bearer test"}
+
+
+@pytest.mark.asyncio
+async def test_open_mcp_http_client_stamps_traceparent_on_sse(monkeypatch) -> None:
+    import mcp
+    import mcp.client.sse
+
+    captured_headers: list[object] = []
+
+    def fake_sse(url, headers=None, timeout=None, sse_read_timeout=None):
+        del url, timeout, sse_read_timeout
+        captured_headers.append(headers)
+
+        @asynccontextmanager
+        async def _cm():
+            yield "sse_stream"
+
+        return _cm()
+
+    monkeypatch.setattr(mcp, "Client", _DummyMcpClient)
+    monkeypatch.setattr(mcp.client.sse, "sse_client", fake_sse)
+    _patch_traceparent(monkeypatch, _FAKE_TRACEPARENT)
+
+    async with open_mcp_http_client(
+        "https://mcp.example/sse",
+        headers={"x-test": "1"},
+        timeout=20.0,
+        transport="sse",
+    ):
+        pass
+
+    assert captured_headers == [
+        {"x-test": "1", "traceparent": _FAKE_TRACEPARENT},
+    ]

@@ -365,18 +365,28 @@ class TestTraceparentInjection:
         assert tp.startswith("00-") and len(tp.split("-")) == 4
 
     async def test_http_loader_forwards_traceparent_on_tool_call(self, monkeypatch):
-        """The real HTTP loader, not a copied helper, must stamp traceparent."""
-        from cubeloop.mcp import http_loader, load_mcp_tools_http
-        from cubeloop.mcp._tracing import mcp_client_span
+        """The real HTTP opener stamps traceparent during AgentTool execute."""
+        import mcp
+        import mcp.client.sse
+        from cubeloop.mcp import load_mcp_tools_http
 
         provider, _exporter = _make_provider()
         _patch_mcp_trace(monkeypatch, provider)
 
         seen_headers: list[dict | None] = []
 
-        class _Client:
+        class DummyClient:
             protocol_version = "2026-07-28"
             server_info = None
+
+            def __init__(self, transport) -> None:
+                del transport
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
 
             async def list_tools(self):
                 return type(
@@ -414,23 +424,28 @@ class TestTraceparentInjection:
                     },
                 )()
 
-        @asynccontextmanager
-        async def fake_open_client(*args, **kwargs):
-            seen_headers.append(kwargs.get("headers"))
-            yield _Client()
+        def fake_sse(url, headers=None, timeout=None, sse_read_timeout=None):
+            del url, timeout, sse_read_timeout
+            seen_headers.append(headers)
 
-        monkeypatch.setattr(http_loader, "_open_client", fake_open_client)
+            @asynccontextmanager
+            async def _cm():
+                yield "sse_stream"
+
+            return _cm()
+
+        monkeypatch.setattr(mcp, "Client", DummyClient)
+        monkeypatch.setattr(mcp.client.sse, "sse_client", fake_sse)
         discovery = await load_mcp_tools_http(
             "https://mcp.example/mcp",
             headers={"x-test": "yes"},
         )
-        async with mcp_client_span(method="tools/call", tool_name="search"):
-            await discovery.tools[0].execute(
-                "tc-trace",
-                discovery.tools[0].parameters(q="cats"),
-                signal=None,
-                on_update=None,
-            )
+        await discovery.tools[0].execute(
+            "tc-trace",
+            discovery.tools[0].parameters(q="cats"),
+            signal=None,
+            on_update=None,
+        )
 
         assert seen_headers[0] == {"x-test": "yes"}
         assert seen_headers[1]["x-test"] == "yes"
