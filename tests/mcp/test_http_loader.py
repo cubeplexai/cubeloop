@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cubeloop.mcp.http_loader import _open_client, open_mcp_http_client
+from cubeloop.mcp.http_loader import open_mcp_http_client
 
 
 class _FakeClient:
@@ -82,8 +82,6 @@ def test_mcp_package_exports_cached_descriptor_primitives() -> None:
     assert "open_mcp_http_client" in mcp.__all__
     assert "make_mcp_agent_tool" in mcp.__all__
     assert "serialize_mcp_call_tool_response" in mcp.__all__
-    # CubePlex #703 imported the private name from http_loader.
-    assert _open_client is open_mcp_http_client
 
 
 @pytest.mark.asyncio

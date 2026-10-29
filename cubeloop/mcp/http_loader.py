@@ -94,10 +94,6 @@ async def open_mcp_http_client(
     raise ValueError(f"unsupported MCP transport '{transport}'")
 
 
-# CubePlex #703 imported this private name; keep it as an alias.
-_open_client = open_mcp_http_client
-
-
 async def load_mcp_tools_http(
     server_url: str,
     *,

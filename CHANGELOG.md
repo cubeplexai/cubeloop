@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **`cubeloop.mcp.http_loader._open_client` is removed.** Import
+  `open_mcp_http_client` from `cubeloop.mcp` instead. Same auto-mode
+  `Client`; callers must not call `initialize()`.
+
 ### Added
 
 - **Public MCP HTTP primitives for cached tool descriptors.** Hosts that persist
