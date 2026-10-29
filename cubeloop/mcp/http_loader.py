@@ -24,22 +24,31 @@ Transport = Literal["sse", "streamable_http"]
 def _headers_with_traceparent(
     headers: dict[str, str] | None,
 ) -> dict[str, str] | None:
-    """Return ``headers``, adding W3C ``traceparent`` when a span is active."""
+    """Return ``headers``, adding W3C ``traceparent`` when a span is active.
+
+    Any existing ``traceparent`` key is replaced case-insensitively so
+    httpx does not send duplicate headers (W3C Trace Context §3.2).
+    """
     from cubeloop.mcp._tracing import current_traceparent
 
     traceparent = current_traceparent()
     if traceparent is None:
         return headers
-    return {**(headers or {}), "traceparent": traceparent}
+    base = {
+        key: value
+        for key, value in (headers or {}).items()
+        if key.lower() != "traceparent"
+    }
+    return {**base, "traceparent": traceparent}
 
 
 @asynccontextmanager
 async def open_mcp_http_client(
     server_url: str,
     *,
-    headers: dict[str, str] | None,
-    timeout: float,
-    transport: Transport,
+    headers: dict[str, str] | None = None,
+    timeout: float = 30.0,
+    transport: Transport = "sse",
 ) -> AsyncIterator[Any]:
     """Open a negotiated MCP HTTP client over ``sse`` or ``streamable_http``.
 

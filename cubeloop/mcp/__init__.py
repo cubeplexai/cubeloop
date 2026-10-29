@@ -1,6 +1,6 @@
-"""cubepi MCP tool loaders.
+"""Model Context Protocol (MCP) tool integration for cubeloop.
 
-cubepi[mcp] extra required.
+cubeloop[mcp] extra required.
 """
 
 from cubeloop.mcp._adapter import (

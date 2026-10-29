@@ -166,6 +166,25 @@ def test_schema_to_model_object_field_becomes_dict() -> None:
     assert instance.config == {"a": 1}
 
 
+def test_make_mcp_agent_tool_defaults_missing_description() -> None:
+    async def _fake_call(name, args):
+        return {"content": [], "isError": False}
+
+    omitted = make_mcp_agent_tool(
+        name="search",
+        input_schema={"type": "object", "properties": {}},
+        call_remote=_fake_call,
+    )
+    from_none = make_mcp_agent_tool(
+        name="search",
+        description=None,
+        input_schema={"type": "object", "properties": {}},
+        call_remote=_fake_call,
+    )
+    assert omitted.description == ""
+    assert from_none.description == ""
+
+
 @pytest.mark.asyncio
 async def test_make_mcp_agent_tool_routes_to_call_remote() -> None:
     called: dict = {}

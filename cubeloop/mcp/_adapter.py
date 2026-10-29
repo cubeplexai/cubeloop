@@ -103,7 +103,7 @@ def _json_schema_type_to_python(schema: dict[str, Any]) -> Any:
 def make_mcp_agent_tool(
     *,
     name: str,
-    description: str,
+    description: str | None = None,
     input_schema: dict[str, Any],
     call_remote: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]],
     server_address: str | None = None,
@@ -117,11 +117,15 @@ def make_mcp_agent_tool(
     returns the MCP tools/call response dict normalized to:
         {"content": [{"type": "text", "text": ...}, ...], "isError": bool}
 
+    ``description`` is optional in the MCP tool schema; ``None`` or a
+    missing value becomes ``""``.
+
     The optional ``server_address`` / ``server_port`` / ``protocol_version``
     / ``session_id`` are recorded on the OTel CLIENT span around the
-    remote call when ``cubepi[tracing]`` is installed. Loaders pass
+    remote call when ``cubeloop[tracing]`` is installed. Loaders pass
     whichever values they have access to from the MCP handshake.
     """
+    description = description or ""
     parameters_model = mcp_schema_to_pydantic_model(
         tool_name=name,
         input_schema=input_schema,

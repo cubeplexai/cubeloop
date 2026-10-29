@@ -124,7 +124,7 @@ async def call_remote(tool_name, args):
 
 tool = make_mcp_agent_tool(
     name=cached["name"],
-    description=cached["description"],
+    description=cached.get("description") or "",
     input_schema=cached["input_schema"],
     call_remote=call_remote,
 )
