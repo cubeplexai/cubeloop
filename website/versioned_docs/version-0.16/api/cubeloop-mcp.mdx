@@ -1,0 +1,256 @@
+---
+id: cubeloop-mcp
+title: cubeloop.mcp
+sidebar_position: 6
+hide_table_of_contents: false
+---
+
+# `cubeloop.mcp`
+
+### make_mcp_agent_tool {#make-mcp-agent-tool}
+
+_function_
+
+```python
+make_mcp_agent_tool(
+    *,
+    name: str,
+    description: str | None = None,
+    input_schema: dict[str, Any],
+    call_remote: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]],
+    server_address: str | None = None,
+    server_port: int | None = None,
+    protocol_version: str | None = None,
+    session_id: str | None = None,
+) -> AgentTool
+```
+
+Build a cubeloop.AgentTool wrapping an MCP tool call.
+
+call_remote is the transport-specific RPC: given (tool_name, args_dict),
+returns the MCP tools/call response dict normalized to:
+    \{"content": [\{"type": "text", "text": ...\}, ...], "isError": bool\}
+
+`description` is optional in the MCP tool schema; `None` or a
+missing value becomes `""`.
+
+The optional `server_address` / `server_port` / `protocol_version`
+/ `session_id` are recorded on the OTel CLIENT span around the
+remote call when `cubeloop[tracing]` is installed. Loaders pass
+whichever values they have access to from the MCP handshake.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/mcp/_adapter.py#L103)
+
+
+### serialize_mcp_call_tool_response {#serialize-mcp-call-tool-response}
+
+_function_
+
+```python
+serialize_mcp_call_tool_response(resp: Any) -> dict[str, Any]
+```
+
+Normalize an MCP SDK CallToolResult (v1 or v2) to the adapter response dict shape.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/mcp/_adapter.py#L336)
+
+
+### load_mcp_tools_http {#load-mcp-tools-http}
+
+_function_
+
+```python
+load_mcp_tools_http(
+    server_url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    timeout: float = 30.0,
+    transport: Transport = 'sse',
+) -> MCPDiscoveryResult
+```
+
+Connect to an MCP server and discover executable tools.
+
+Supports both the stateless MCP 2026-07-28 protocol and legacy servers.
+MCP SDK v2 performs protocol negotiation; in auto mode it uses
+`server/discover` for modern servers and falls back to `initialize`.
+Each returned tool opens a fresh client for invocation, matching the
+loader's previous no-pooling behaviour.
+
+`timeout` wraps the entire connection, handshake, and RPC execution.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/mcp/http_loader.py#L106)
+
+
+### open_mcp_http_client {#open-mcp-http-client}
+
+_function_
+
+```python
+open_mcp_http_client(
+    server_url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    timeout: float = 30.0,
+    transport: Transport = 'sse',
+) -> AsyncIterator[Any]
+```
+
+Open a negotiated MCP HTTP client over `sse` or `streamable_http`.
+
+The SDK `Client` is auto-mode: it probes `server/discover`
+(2026-07-28) and falls back to `initialize` for 1.x servers.
+Callers must not invoke `initialize()` themselves.
+
+When a CubeLoop MCP CLIENT span is active, the opener stamps a W3C
+`traceparent` header so an instrumented server can continue the
+trace. Hosts that persist `tools/list` should pair this with
+[`cubeloop.mcp.make_mcp_agent_tool`](./cubeloop-mcp#make-mcp-agent-tool) and
+[`cubeloop.mcp.serialize_mcp_call_tool_response`](./cubeloop-mcp#serialize-mcp-call-tool-response).
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/mcp/http_loader.py#L45)
+
+
+### load_mcp_tools_stdio {#load-mcp-tools-stdio}
+
+_function_
+
+```python
+load_mcp_tools_stdio(
+    command: str,
+    args: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    cwd: str | None = None,
+    timeout: float = 30.0,
+) -> MCPDiscoveryResult
+```
+
+Spawn an MCP server and load tools using the MCP v2 client.
+
+`mcp.Client` negotiates the stateless 2026-07-28 protocol by default and
+falls back to the legacy `initialize` handshake for older servers.  A
+process is deliberately opened for discovery and again for every tool call,
+preserving this loader's existing no-pooling behaviour.
+
+`timeout` wraps the entire connection, handshake, and RPC execution.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/mcp/stdio_loader.py#L20)
+
+
+### MCPDiscoveryResult {#mcpdiscoveryresult}
+
+_class_
+
+```python
+MCPDiscoveryResult(
+    tools: list[AgentTool],
+    server: MCPServerInfo | None = None,
+    tool_infos: list[MCPToolInfo] = list(),
+)
+```
+
+Outcome of an MCP discovery handshake.
+
+`tools` is the executable surface (one `AgentTool` per tool the
+server exposes). `server` and `tool_infos` are display metadata
+captured from the same handshake; both follow MCP spec rev 2025-11-25.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/mcp/types.py#L56)
+
+
+**Attributes**
+
+- `tools`: `list[AgentTool]`
+- `server`: `MCPServerInfo | None`
+- `tool_infos`: `list[MCPToolInfo]`
+
+
+### MCPIcon {#mcpicon}
+
+_class_
+
+```python
+MCPIcon(
+    src: str,
+    mime_type: str | None = None,
+    sizes: tuple[str, ...] | None = None,
+    theme: str | None = None,
+)
+```
+
+One icon entry from an MCP `Icon` block.
+
+Mirrors `mcp.types.Icon` with snake_case fields. `src` is either an
+HTTP/HTTPS URL or a `data:` URI; `sizes` is a tuple of strings such
+as `("48x48", "96x96")`. `theme` is `"light"` or `"dark"` when
+the server supplies separate variants — the spec lets clients pick the
+variant matching the current UI theme and fall back to the first entry
+otherwise.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/mcp/types.py#L10)
+
+
+**Attributes**
+
+- `src`: `str`
+- `mime_type`: `str | None`
+- `sizes`: `tuple[str, ...] | None`
+- `theme`: `str | None`
+
+
+### MCPServerInfo {#mcpserverinfo}
+
+_class_
+
+```python
+MCPServerInfo(
+    name: str,
+    version: str,
+    website_url: str | None = None,
+    icons: tuple[MCPIcon, ...] = (),
+)
+```
+
+Server-level metadata captured from the `initialize` handshake.
+
+Sourced from `InitializeResult.serverInfo` (an `Implementation`):
+the server's display name + version, an optional website URL, and an
+optional list of icons that clients can render as the server's logo.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/mcp/types.py#L28)
+
+
+**Attributes**
+
+- `name`: `str`
+- `version`: `str`
+- `website_url`: `str | None`
+- `icons`: `tuple[MCPIcon, ...]`
+
+
+### MCPToolInfo {#mcptoolinfo}
+
+_class_
+
+```python
+MCPToolInfo(name: str, icons: tuple[MCPIcon, ...] = ())
+```
+
+Per-tool display metadata captured from `tools/list`.
+
+Carries `Tool.icons` separately from the executable `AgentTool` so
+consumers can render tool-specific icons without coupling cubepi's
+core `AgentTool` type to MCP display concerns.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/mcp/types.py#L43)
+
+
+**Attributes**
+
+- `name`: `str`
+- `icons`: `tuple[MCPIcon, ...]`
+
+
+
+<!-- GENERATED by build_api_reference.py — DO NOT EDIT -->

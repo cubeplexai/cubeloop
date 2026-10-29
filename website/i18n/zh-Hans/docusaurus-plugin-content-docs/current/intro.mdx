@@ -70,9 +70,10 @@ pip install cubeloop
 这里描述的 API 在打 tag 发布之前还可能变动。
 
 最新已发布版本是 v<PackageVersion />（[从右上角版本选择器切换](pathname:///)）。
-CubeLoop 0.15 增加 Execution Session，供宿主获取明确的执行结果、识别运行中
-输入，并跟踪检查点提交后的事件交付。详见[核心概念](./getting-started/core-concepts.md)
-和 [API 参考](./api/index.mdx)。
+CubeLoop 0.16 升级到 MCP Python SDK 2.x 并采用高层 Client auto 模式，
+暴露用于缓存 MCP 工具描述符的公共 HTTP 原语，并将模型空完成视为可重试的
+`EmptyCompletion` 异常。详见[MCP 工具加载](./guides/mcp/loading.md)和
+[API 参考](./api/index.mdx)。
 
 源代码、Issue 和讨论都在
 [GitHub](https://github.com/cubeplexai/cubeloop)。

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-28
+
 ### Breaking
 
 - **`cubeloop.mcp.http_loader._open_client` is removed.** Import
@@ -23,6 +25,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `timeout=30`, `transport="sse"`) and stamps W3C `traceparent` when a
   CubeLoop MCP CLIENT span is active. `make_mcp_agent_tool` treats a missing
   or `None` description as `""` (`#252`).
+- **MCP Python SDK v2 support with legacy fallback.** The optional `mcp` extra
+  requires `mcp>=2.0,<3`. HTTP and stdio loaders use the high-level `Client`
+  in auto mode, querying the modern 2026-07-28 `server/discover` path first
+  and falling back to the legacy `initialize` handshake when connecting to
+  older servers (`#243`).
+
+### Fixed
+
+- **Empty model completions trigger retry and provider failover.** When an
+  upstream model completes with `stop_reason="stop"` but contains no text
+  content and no tool calls, CubeLoop raises `EmptyCompletion` rather than
+  returning an empty turn. `FallbackBoundModel` includes `EmptyCompletion`
+  in default retry and trigger errors so transient empty completions trigger
+  retries and provider failover (`#247`).
 
 ## [0.15.3] - 2026-10-26
 
@@ -942,7 +958,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **[0.2.0]** - 2026-05-10 — see the [release notes](https://github.com/cubeplexai/cubepi/releases/tag/v0.2.0).
 - **[0.1.0]** - 2026-05-09 — initial release. See the [release notes](https://github.com/cubeplexai/cubepi/releases/tag/v0.1.0).
 
-[Unreleased]: https://github.com/cubeplexai/cubeloop/compare/v0.15.3...HEAD
+[Unreleased]: https://github.com/cubeplexai/cubeloop/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/cubeplexai/cubeloop/compare/v0.15.3...v0.16.0
 [0.15.3]: https://github.com/cubeplexai/cubeloop/compare/v0.15.2...v0.15.3
 [0.15.2]: https://github.com/cubeplexai/cubeloop/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/cubeplexai/cubeloop/compare/v0.15.0...v0.15.1
