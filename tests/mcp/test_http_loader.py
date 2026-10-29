@@ -84,6 +84,17 @@ def test_mcp_package_exports_cached_descriptor_primitives() -> None:
     assert "serialize_mcp_call_tool_response" in mcp.__all__
 
 
+def test_open_mcp_http_client_keyword_defaults_match_loader() -> None:
+    import inspect
+
+    from cubeloop.mcp.http_loader import load_mcp_tools_http
+
+    opener = inspect.signature(open_mcp_http_client)
+    loader = inspect.signature(load_mcp_tools_http)
+    for name in ("headers", "timeout", "transport"):
+        assert opener.parameters[name].default == loader.parameters[name].default
+
+
 @pytest.mark.asyncio
 async def test_load_mcp_tools_http_uses_negotiated_v2_client(monkeypatch) -> None:
     """A modern connection exposes its negotiated version and serializes calls."""
@@ -380,3 +391,151 @@ async def test_open_mcp_http_client_stamps_traceparent_on_sse(monkeypatch) -> No
     assert captured_headers == [
         {"x-test": "1", "traceparent": _FAKE_TRACEPARENT},
     ]
+
+
+@pytest.mark.asyncio
+async def test_open_mcp_http_client_defaults_to_sse_without_kwargs(
+    monkeypatch,
+) -> None:
+    import mcp
+    import mcp.client.sse
+
+    captured: dict[str, object] = {}
+
+    def fake_sse(url, headers=None, timeout=None, sse_read_timeout=None):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["timeout"] = timeout
+        captured["sse_read_timeout"] = sse_read_timeout
+
+        @asynccontextmanager
+        async def _cm():
+            yield "sse_stream"
+
+        return _cm()
+
+    monkeypatch.setattr(mcp, "Client", _DummyMcpClient)
+    monkeypatch.setattr(mcp.client.sse, "sse_client", fake_sse)
+
+    async with open_mcp_http_client("https://mcp.example/sse"):
+        pass
+
+    assert captured == {
+        "url": "https://mcp.example/sse",
+        "headers": None,
+        "timeout": 30.0,
+        "sse_read_timeout": 30.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_open_mcp_http_client_replaces_case_variant_traceparent(
+    monkeypatch,
+) -> None:
+    import mcp
+    import mcp.client.streamable_http
+
+    captured_headers: list[object] = []
+    caller_headers = {
+        "Authorization": "Bearer test",
+        "Traceparent": "00-oldoldoldoldoldoldoldoldoldoldoldold-oldoldoldoldoldold-01",
+        "TRACEPARENT": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-00",
+    }
+
+    class _FakeHttpClient:
+        def __init__(self, **kwargs: object) -> None:
+            captured_headers.append(kwargs.get("headers"))
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            pass
+
+    def fake_create_mcp_http_client(**kwargs: object) -> _FakeHttpClient:
+        return _FakeHttpClient(**kwargs)
+
+    @asynccontextmanager
+    async def fake_streamable(url, http_client=None):
+        yield http_client
+
+    monkeypatch.setattr(mcp, "Client", _DummyMcpClient)
+    monkeypatch.setattr(
+        mcp.client.streamable_http, "streamable_http_client", fake_streamable
+    )
+    monkeypatch.setattr(
+        "mcp.shared._httpx_utils.create_mcp_http_client",
+        fake_create_mcp_http_client,
+    )
+    _patch_traceparent(monkeypatch, _FAKE_TRACEPARENT)
+
+    async with open_mcp_http_client(
+        "https://mcp.example/mcp",
+        headers=caller_headers,
+        transport="streamable_http",
+    ):
+        pass
+
+    assert captured_headers == [
+        {
+            "Authorization": "Bearer test",
+            "traceparent": _FAKE_TRACEPARENT,
+        }
+    ]
+    assert caller_headers["Traceparent"].startswith("00-old")
+    assert "traceparent" not in caller_headers
+
+
+@pytest.mark.asyncio
+async def test_cached_descriptor_recipe_builds_and_executes(monkeypatch) -> None:
+    """Documented host path: persist tools/list, rebuild AgentTool, execute."""
+    from cubeloop import mcp
+    from cubeloop.providers.base import ImageContent, TextContent
+
+    clients: list[_FakeClient] = []
+
+    @asynccontextmanager
+    async def fake_open_client(*args, **kwargs):
+        del args, kwargs
+        client = _FakeClient()
+        clients.append(client)
+        yield client
+
+    monkeypatch.setattr(mcp, "open_mcp_http_client", fake_open_client)
+
+    cached = {
+        "name": "search",
+        "input_schema": {
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        },
+    }
+
+    async def call_remote(tool_name, args):
+        async with mcp.open_mcp_http_client(
+            "https://mcp.example/mcp",
+            transport="streamable_http",
+        ) as client:
+            response = await client.call_tool(tool_name, args)
+            return mcp.serialize_mcp_call_tool_response(response)
+
+    tool = mcp.make_mcp_agent_tool(
+        name=cached["name"],
+        description=cached.get("description"),
+        input_schema=cached["input_schema"],
+        call_remote=call_remote,
+    )
+    result = await tool.execute(
+        "tc-cached",
+        tool.parameters(query="cats"),
+        signal=None,
+        on_update=None,
+    )
+
+    assert tool.description == ""
+    assert len(clients) == 1
+    assert clients[0].calls == [("search", {"query": "cats"})]
+    assert isinstance(result.content[0], TextContent)
+    assert isinstance(result.content[1], ImageContent)
+    assert result.details["structuredContent"] == {"source": "fake"}
