@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Public MCP HTTP primitives for cached tool descriptors.** Hosts that persist
+  `tools/list` can rebuild `AgentTool`s without re-discovering:
+  `open_mcp_http_client`, `make_mcp_agent_tool`, and
+  `serialize_mcp_call_tool_response` are exported from `cubeloop.mcp`. The
+  opener stamps W3C `traceparent` when a CubeLoop MCP CLIENT span is active
+  (`#252`).
+
 ## [0.15.3] - 2026-10-26
 
 ### Fixed

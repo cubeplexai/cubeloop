@@ -85,21 +85,24 @@ Build the `AgentTool` yourself with a closure that knows how to
 refresh:
 
 ```python
-from cubeloop.mcp._adapter import make_mcp_agent_tool
-from cubeloop.mcp import load_mcp_tools_http
+from cubeloop.mcp import (
+    make_mcp_agent_tool,
+    open_mcp_http_client,
+    serialize_mcp_call_tool_response,
+)
 
 async def call_remote_with_refresh(tool_name, args):
     headers = {"Authorization": f"Bearer {await fetch_token()}"}
-    # Re-implement the http_loader's call_remote with fresh headers each time
-    from mcp.client.sse import sse_client
-    from mcp import ClientSession
-    async with sse_client(server_url, headers=headers, timeout=30) as streams:
-        async with ClientSession(*streams) as session:
-            await session.initialize()
-            resp = await session.call_tool(tool_name, args)
-            return _serialize_call_tool_response(resp)
+    async with open_mcp_http_client(
+        server_url,
+        headers=headers,
+        timeout=30.0,
+        transport="sse",
+    ) as client:
+        # Auto-mode Client: do not call initialize().
+        resp = await client.call_tool(tool_name, args)
+        return serialize_mcp_call_tool_response(resp)
 
-# Use the adapter directly:
 my_tool = make_mcp_agent_tool(
     name="…",
     description="…",

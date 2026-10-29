@@ -100,6 +100,49 @@ the SDK stamps the required routing headers (`MCP-Protocol-Version`,
 See [MCP Auth](./auth) for the auth patterns you'll likely need with
 HTTP servers.
 
+## Cached descriptors
+
+Hosts that persist `tools/list` (so a later send does not rediscover)
+rebuild `AgentTool`s from the cached JSON Schema:
+
+```python
+from cubeloop.mcp import (
+    make_mcp_agent_tool,
+    open_mcp_http_client,
+    serialize_mcp_call_tool_response,
+)
+
+async def call_remote(tool_name, args):
+    async with open_mcp_http_client(
+        server_url,
+        headers=headers,
+        timeout=30.0,
+        transport="streamable_http",
+    ) as client:
+        response = await client.call_tool(tool_name, args)
+        return serialize_mcp_call_tool_response(response)
+
+tool = make_mcp_agent_tool(
+    name=cached["name"],
+    description=cached["description"],
+    input_schema=cached["input_schema"],
+    call_remote=call_remote,
+)
+```
+
+`open_mcp_http_client` is the same auto-mode `Client` the loaders use:
+it probes `server/discover` and falls back to `initialize`. Do not call
+`initialize()` yourself.
+
+When a CubeLoop MCP CLIENT span is active (every tool from
+`make_mcp_agent_tool` opens one around `call_remote`), the opener stamps
+a W3C `traceparent` header so an instrumented server can continue the
+trace. Hosts should not import `cubeloop.mcp._tracing`.
+
+OAuth refresh, 401 retry, and the cache JSON shape stay in the host.
+Pass a `call_remote` that fetches a fresh token per call when the token
+is short-lived — see [MCP Auth](./auth).
+
 ## What you get back
 
 Each entry in the returned list is an `AgentTool`:
@@ -187,8 +230,9 @@ downstream programmatic access, but not shown to the model.
 - [MCP Auth](./auth) — bearer tokens, headers, env-based credentials.
 - [Tool Use](../agents/tool-use) — how tools (MCP or otherwise) are
   dispatched.
-- [`make_mcp_agent_tool` source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/mcp/_adapter.py)
-  — the schema → Pydantic adapter, if you need to customise.
+- [`make_mcp_agent_tool`](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/mcp/_adapter.py)
+  — exported from `cubeloop.mcp`; schema → Pydantic adapter for cached
+  descriptors.
 - [Deferred Tool Groups](../middleware/deferred-tools) — hide MCP
   schemas from the system prompt and let the model expand them on
   demand. Useful when several MCP servers add up to a context-heavy
