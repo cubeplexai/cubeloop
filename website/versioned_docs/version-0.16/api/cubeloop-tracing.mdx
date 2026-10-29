@@ -1,0 +1,498 @@
+---
+id: cubeloop-tracing
+title: cubeloop.tracing
+sidebar_position: 7
+hide_table_of_contents: false
+---
+
+# `cubeloop.tracing`
+
+### tracing_context {#tracing-context}
+
+_function_
+
+```python
+tracing_context(
+    *,
+    tags: list[str] | tuple[str, ...] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> Iterator[None]
+```
+
+Scope tags / metadata onto agent runs started inside this block.
+
+The recorder reads these contextvars on `AgentStartEvent` and
+stamps them on the `invoke_agent` span as:
+
+- `cubeloop.tags` — tuple of strings (OTel attribute type)
+- one attribute per metadata key, namespaced under
+  `cubeloop.metadata.*` (e.g. `metadata=\{"user_id": "u-42"\}` →
+  `cubeloop.metadata.user_id = "u-42"`). The dedicated
+  sub-namespace keeps recorder-owned schema keys
+  (`cubeloop.run_id`, `cubeloop.turn.index`, …) safe from
+  caller-supplied collisions.
+
+The contextvar nature means this works for concurrent agents:
+each asyncio task tree gets its own value. Nested blocks merge
+additively (tags concatenate; metadata is union with inner
+keys winning).
+
+
+**Args**
+
+- `tags` — Tags to apply to runs started in this scope. Stored as
+        a tuple on the span so it round-trips through OTel's
+        attribute serializer.
+- `metadata` — Per-run key/value pairs. Values must be types that
+        OTel attributes accept (str, bool, int, float, or a
+        tuple/list of those); other shapes will be silently
+        dropped by the recorder.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/tracing/context.py#L51)
+
+
+### JsonlSpanExporter {#jsonlspanexporter}
+
+_class_
+
+```python
+JsonlSpanExporter(directory: str | os.PathLike[str] = './cubeloop-traces')
+```
+
+Write each ReadableSpan as one JSON line.
+
+Files: `<directory>/<YYYY-MM-DD>/<trace_id>.jsonl`, one file per trace
+so the parent run and any nested subagent runs (same trace_id, different
+`cubeloop.run_id`) land together. The date used for the subdirectory is
+the span's start time (UTC). The `trace_id` is the span's 32-hex trace
+id; spans without a context fall back to `"unknown-trace"`.
+
+Permissions: files are created mode `0o600` (user-only).
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/tracing/exporters/jsonl.py#L23)
+
+
+**Methods**
+
+#### `export` {#jsonlspanexporter-export}
+
+```python
+export(spans: Sequence[ReadableSpan]) -> SpanExportResult
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/tracing/exporters/jsonl.py#L42)
+
+
+#### `shutdown` {#jsonlspanexporter-shutdown}
+
+```python
+shutdown() -> None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/tracing/exporters/jsonl.py#L69)
+
+
+#### `force_flush` {#jsonlspanexporter-force-flush}
+
+```python
+force_flush(timeout_millis: int = 30000) -> bool
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/tracing/exporters/jsonl.py#L72)
+
+
+
+### Meter {#meter}
+
+_class_
+
+```python
+Meter(
+    *,
+    resource: Resource | None = None,
+    exporters: list[MetricExporter] | None = None,
+    export_interval_millis: int = 60000,
+)
+```
+
+Emit OTel GenAI histograms alongside the cubepi Tracer.
+
+Construct with a list of `MetricExporter` instances (e.g. the
+OTLP metric exporter); call `attach` to start emitting.
+
+Example:
+
+```python
+from cubeloop.tracing import Tracer, Meter
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
+    OTLPMetricExporter,
+)
+
+tracer = Tracer(service_name="my-bot", exporters=[...])
+meter = Meter(
+    resource=tracer.resource,
+    exporters=[OTLPMetricExporter(endpoint="http://collector:4318/v1/metrics")],
+)
+tracer.attach(agent)
+meter.attach(agent)
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/tracing/meter.py#L72)
+
+
+**Attributes**
+
+- `otel_meter`: `Any` — The underlying `opentelemetry.metrics.Meter` — exposed so callers can register their own instruments.
+
+
+**Methods**
+
+#### `attach` {#meter-attach}
+
+```python
+attach(agent: 'Agent') -> Callable[[], None]
+```
+
+Subscribe to `agent` and start emitting metrics.
+
+Each `attach()` call gets its own `_MeterState` so
+multiple concurrent agents attached to the same Meter don't
+clobber each other's open-ns timestamps and attribute dicts
+(codex overall-review MAJOR — previously all state lived on
+the Meter instance, so a second agent's `provider_request`
+overwrote the first agent's `_chat_open_ns` / `_chat_attrs`
+before its response landed).
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/tracing/meter.py#L145)
+
+
+#### `force_flush` {#meter-force-flush}
+
+```python
+force_flush(timeout_seconds: float = 30.0) -> bool
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/tracing/meter.py#L203)
+
+
+#### `shutdown` {#meter-shutdown}
+
+```python
+shutdown(timeout_seconds: float = 30.0) -> None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/tracing/meter.py#L211)
+
+
+#### `attached` {#meter-attached}
+
+```python
+attached(agent: 'Agent') -> AsyncIterator['Meter']
+```
+
+RAII wrapper around `attach`.
+
+`async with` enters by attaching the per-attach state, exits
+by calling the detach callable returned from `attach`.
+Mirrors [`Tracer.attached`](./cubeloop-tracing#tracer-attached) — use both for the cleanest
+end-to-end shutdown:
+
+```python
+async with (
+    Tracer(...) as tracer,
+    Meter(resource=tracer.resource, ...) as meter,
+    tracer.attached(agent),
+    meter.attached(agent),
+):
+    await agent.prompt("...")
+# auto: detach both + shutdown both
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/tracing/meter.py#L218)
+
+
+
+### SCHEMA_URL {#schema-url}
+
+_attribute_
+
+```python
+SCHEMA_URL = 'https://opentelemetry.io/schemas/1.41.0'
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/tracing/schema.py#L13)
+
+
+### Tracer {#tracer}
+
+_class_
+
+```python
+Tracer(
+    *,
+    service_name: str | None = None,
+    service_version: str | None = None,
+    service_namespace: str | None = None,
+    service_instance_id: str | None = None,
+    deployment_environment: str | None = None,
+    agent_name: str | None = None,
+    agent_id: str | None = None,
+    agent_description: str | None = None,
+    agent_version: str | None = None,
+    exporters: list[SpanExporter] | None = None,
+    record_content: bool = False,
+    record_stream: bool = False,
+    stream_dir: 'str | Path | None' = None,
+    redact: 'Callable[[str, Any], Any] | None' = None,
+    resource: Resource | None = None,
+    atexit_flush: bool = True,
+    atexit_flush_timeout_seconds: float = 5.0,
+)
+```
+
+Attaches OTel-compatible tracing to a cubepi [`Agent`](./cubeloop-agent#agent).
+
+Construct once per process (or per service). Each `attach(agent)`
+call wires the cubepi recorder to the agent's event stream and
+provider listener registry; the returned callable detaches.
+
+**Example**
+
+```python
+from cubeloop.tracing import Tracer
+from cubeloop.tracing.exporters import JsonlSpanExporter
+
+tracer = Tracer(
+    service_name="my-bot",
+    agent_name="coding-agent",
+    exporters=[JsonlSpanExporter(directory="./cubeloop-traces")],
+)
+detach = tracer.attach(agent)
+try:
+    ...
+finally:
+    detach()
+    await tracer.shutdown()
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/tracing/tracer.py#L115)
+
+
+**Attributes**
+
+- `resource`: `Resource`
+- `otel_tracer`: `Any` — The underlying `opentelemetry.trace.Tracer` instance.
+- `redact`: `'Callable[[str, Any], Any] | None'` — Optional `(key, value) -> value` filter applied at every `set_attribute` site for content attributes.
+
+
+**Methods**
+
+#### `attach` {#tracer-attach}
+
+```python
+attach(agent: 'Agent') -> Callable[[], Any]
+```
+
+Wire the cubepi recorder to `agent`.
+
+Returns a `detach()` callable. When invoked:
+
+- Synchronously: unsubscribes every hook, closes any spans
+  still open from a cancelled run, sweeps MCP tool-span
+  registrations — observable on the next line.
+- Schedules a flush on the running event loop and returns the
+  resulting `asyncio.Task` so callers can `await detach()`
+  to block until buffered spans have been exported. Outside
+  an async context returns `None` — call
+  `await tracer.shutdown()` separately to flush.
+
+Either `await detach()` or `await tracer.shutdown()` (or
+both) must be used in the caller's `finally` block; the
+synchronous `detach()` alone does not guarantee that ended
+spans have left `BatchSpanProcessor` (codex overall-review
+MAJOR).
+
+Also registers this Tracer's private TracerProvider with
+`cubeloop.mcp._tracing` so MCP CLIENT spans flow through
+the same exporters — without this step, the MCP module falls
+back to the OTel global default (a no-op provider when the
+caller didn't separately call `trace.set_tracer_provider`).
+The detach callable unregisters.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/tracing/tracer.py#L239)
+
+
+#### `force_flush` {#tracer-force-flush}
+
+```python
+force_flush(timeout_seconds: float = 30.0) -> bool
+```
+
+Block until all currently buffered spans are exported.
+
+The provider's `force_flush` is synchronous and can hold for
+seconds when an exporter is slow (e.g. OTLP HTTP to a remote or
+backlogged collector), so it runs in a worker thread — awaiting
+this never stalls the event loop.
+
+Returns `False` on timeout.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/tracing/tracer.py#L334)
+
+
+#### `shutdown` {#tracer-shutdown}
+
+```python
+shutdown(timeout_seconds: float = 30.0) -> None
+```
+
+Flush and close all exporters. Tracer is unusable after this.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/tracing/tracer.py#L349)
+
+
+#### `attached` {#tracer-attached}
+
+```python
+attached(agent: 'Agent') -> AsyncIterator['Tracer']
+```
+
+RAII wrapper around `attach`.
+
+`async with` enters by attaching the recorder, exits by
+running detach and (in an async context) awaiting its returned
+flush `Task`. Equivalent to:
+
+```python
+detach = tracer.attach(agent)
+try:
+    ...
+finally:
+    result = detach()
+    if result is not None:  # async context: it's a Task
+        await result
+```
+
+Use this instead of the bare `attach` / `finally: detach()`
+pattern when you want the cleanup tied to a single ``async
+with`` block. Combines with [`Tracer`](./cubeloop-tracing#tracer)'s own context
+manager:
+
+```python
+async with Tracer(...) as tracer, tracer.attached(agent):
+    await agent.prompt("...")
+# auto: detach (closes cancelled spans) + shutdown (flush + close)
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/tracing/tracer.py#L395)
+
+
+#### `oneshot` {#tracer-oneshot}
+
+```python
+oneshot(
+    *,
+    model: 'BoundModel',
+    operation: str = 'oneshot',
+    metadata: 'dict[str, str | int | float | bool] | None' = None,
+    record_content: bool | None = None,
+) -> AsyncIterator['_OneShotSession']
+```
+
+Instrumented one-shot LLM call that produces a trace without a full Agent.
+
+Creates an `invoke_agent` root span (so the `cubepi trace` CLI
+indexes it alongside normal agent runs) and wires the provider's
+listeners for the duration of the block, producing a `chat` child
+span automatically when `_OneShotSession.generate` is called.
+
+`metadata` keys are stamped as `cubeloop.metadata.<key>` attributes on
+the root span and are queryable with
+`cubepi trace ls --meta <key>=<value>`.
+
+`operation` is recorded in two places:
+
+- `cubeloop.oneshot.operation` — for span introspection and dashboards.
+- `cubeloop.metadata.oneshot_operation` — so the CLI `--meta` filter
+  (which only reads `cubeloop.metadata.*` attributes) can reach it:
+
+```python
+  uv run cubepi trace ls --meta oneshot_operation=consolidate_memory
+  uv run cubepi trace ls --meta conversation_id=conv-123
+```
+
+Example:
+
+```python
+async with tracer.oneshot(
+    model=model,
+    operation="consolidate_memory",
+    metadata={"conversation_id": conv_id, "user_id": user_id},
+) as session:
+    text = await session.generate(
+        system=SYSTEM_PROMPT,
+        messages=[UserMessage(...)],
+        max_output_tokens=1500,
+    )
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/tracing/tracer.py#L445)
+
+
+
+### trace {#trace}
+
+_function_
+
+```python
+trace(
+    tracer: 'Tracer | None',
+    agent: 'Agent',
+    *,
+    flush: Literal['await', 'background'] = 'await',
+) -> AsyncIterator[None]
+```
+
+Best-effort tracing scope for one agent run.
+
+Attaches `tracer` to `agent` on enter and detaches + flushes its
+buffered spans on exit. Every tracing fault — a failed attach, detach, or
+flush — is logged and swallowed, so tracing can never break or fail the
+work inside the `async with` block. Passing `tracer=None` makes the
+block a no-op, which lets callers gate tracing on config without branching
+at the call site.
+
+`flush` picks what exiting the block waits for:
+
+- `"await"` (default) — block until this run's spans are exported.
+  The exit is only as fast as the slowest exporter; use it when the
+  caller has nothing latency-sensitive after the block.
+- `"background"` — detach synchronously (listeners are off before
+  the next line) but let the export run as a supervised background
+  task. Use this on request/serving paths where a caller is waiting
+  on the block's completion: span export to a slow collector must
+  not gate a user-visible response. The tracer keeps a strong
+  reference to the task and `await tracer.shutdown()` settles any
+  still-pending flushes, so spans are not lost on clean shutdown.
+
+This does **not** shut the tracer down: the tracer is reusable across runs,
+so build it once (e.g. per process) and call `await tracer.shutdown()`
+when the owning process stops.
+
+Unlike [`Tracer.attached`](./cubeloop-tracing#tracer-attached), which surfaces flush failures to the caller,
+this helper swallows them — use it when tracing is auxiliary to the work and
+must never affect its outcome.
+
+**Example**
+
+```python
+async with trace(tracer, agent, flush="background"):
+    await agent.prompt("...")
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/tracing/tracer.py#L776)
+
+
+
+<!-- GENERATED by build_api_reference.py — DO NOT EDIT -->

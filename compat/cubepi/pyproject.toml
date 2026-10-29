@@ -1,6 +1,6 @@
 [project]
 name = "cubepi"
-version = "0.15.3"
+version = "0.16.0"
 description = "REMOVED: Install cubeloop and migrate imports from cubepi."
 readme = "README.md"
 license = "MIT"

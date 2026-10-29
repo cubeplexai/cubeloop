@@ -1,0 +1,593 @@
+---
+id: cubeloop-session
+title: cubeloop.session
+sidebar_position: 2
+hide_table_of_contents: false
+---
+
+# `cubeloop.session`
+
+### ExecutionEventEnvelope {#executioneventenvelope}
+
+_class_
+
+```python
+ExecutionEventEnvelope(run_id: str, attempt_id: str, seq: int, event: SessionEvent)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/events.py#L27)
+
+
+**Attributes**
+
+- `run_id`: `str`
+- `attempt_id`: `str`
+- `seq`: `int`
+- `event`: `SessionEvent`
+
+
+### ExecutionFinished {#executionfinished}
+
+_class_
+
+```python
+ExecutionFinished(
+    result: ExecutionResult,
+    type: Literal['execution_finished'] = 'execution_finished',
+)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/events.py#L18)
+
+
+**Attributes**
+
+- `result`: `ExecutionResult`
+- `type`: `Literal['execution_finished']`
+
+
+### InputCommitted {#inputcommitted}
+
+_class_
+
+```python
+InputCommitted(
+    input_id: str,
+    durability: InputDurability,
+    type: Literal['input_committed'] = 'input_committed',
+)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/events.py#L11)
+
+
+**Attributes**
+
+- `input_id`: `str`
+- `durability`: `InputDurability`
+- `type`: `Literal['input_committed']`
+
+
+### SessionEvent {#sessionevent}
+
+_attribute_
+
+```python
+SessionEvent: TypeAlias = AgentEvent | InputCommitted | ExecutionFinished
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/events.py#L24)
+
+
+### InputEnvelope {#inputenvelope}
+
+_class_
+
+```python
+InputEnvelope(input_id: str, message: Message, mode: InputMode)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/input.py#L13)
+
+
+**Attributes**
+
+- `input_id`: `str`
+- `message`: `Message`
+- `mode`: `InputMode`
+
+
+### InputReceipt {#inputreceipt}
+
+_class_
+
+```python
+InputReceipt(
+    input_id: str,
+    status: InputStatus,
+    durability: InputDurability | None = None,
+)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/input.py#L20)
+
+
+**Attributes**
+
+- `input_id`: `str`
+- `status`: `InputStatus`
+- `durability`: `InputDurability | None`
+
+
+### ExecutionSession {#executionsession}
+
+_class_
+
+```python
+ExecutionSession(agent: Agent)
+```
+
+Public lifecycle for sequential execution attempts owned by one Agent.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/session.py#L76)
+
+
+**Attributes**
+
+- `active_attempt_id`: `str | None`
+- `turn_contexts`: `tuple[TurnExecutionContext, ...]`
+- `state_context`: `JsonObject` — The stable, live mapping persisted as checkpoint extra state.
+
+
+**Methods**
+
+#### `load_checkpoint` {#executionsession-load-checkpoint}
+
+```python
+load_checkpoint() -> CheckpointData | None
+```
+
+Atomically install checkpoint messages and extra while idle.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/session.py#L127)
+
+
+#### `request_cancel` {#executionsession-request-cancel}
+
+```python
+request_cancel() -> None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/session.py#L148)
+
+
+#### `wait_for_idle` {#executionsession-wait-for-idle}
+
+```python
+wait_for_idle() -> None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/session.py#L154)
+
+
+#### `request_detach` {#executionsession-request-detach}
+
+```python
+request_detach() -> None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/session.py#L157)
+
+
+#### `subscribe` {#executionsession-subscribe}
+
+```python
+subscribe(
+    listener: Callable[[ExecutionEventEnvelope], Any],
+    *,
+    required: bool = False,
+    name: str | None = None,
+    capacity: int = 256,
+    delivery_timeout: float = 1.0,
+) -> Callable[[], None]
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/session.py#L162)
+
+
+#### `submit_input` {#executionsession-submit-input}
+
+```python
+submit_input(envelope: InputEnvelope) -> InputReceipt
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/session.py#L200)
+
+
+#### `cancel_input` {#executionsession-cancel-input}
+
+```python
+cancel_input(input_id: str) -> InputReceipt
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/session.py#L246)
+
+
+#### `execute` {#executionsession-execute}
+
+```python
+execute(request: ExecutionRequest) -> ExecutionResult
+```
+
+Execute one attempt and return settled lifecycle facts.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/session.py#L299)
+
+
+
+### ContinueExecutionRequest {#continueexecutionrequest}
+
+_class_
+
+```python
+ContinueExecutionRequest(
+    run_id: str,
+    attempt_id: str,
+    kind: Literal['continue'] = 'continue',
+)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/types.py#L32)
+
+
+**Attributes**
+
+- `run_id`: `str`
+- `attempt_id`: `str`
+- `kind`: `Literal['continue']`
+
+
+### DeliveryError {#deliveryerror}
+
+_class_
+
+```python
+DeliveryError(
+    consumer: str,
+    seq: int,
+    reason: Literal['timeout', 'closed', 'error'],
+    message: str = '',
+)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/types.py#L51)
+
+
+**Attributes**
+
+- `consumer`: `str`
+- `seq`: `int`
+- `reason`: `Literal['timeout', 'closed', 'error']`
+- `message`: `str`
+
+
+### ExecutionBusy {#executionbusy}
+
+_class_
+
+Raised when an Agent already has an executing or finalizing attempt.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/types.py#L71)
+
+
+### ExecutionError {#executionerror}
+
+_class_
+
+```python
+ExecutionError(
+    kind: Literal['cancelled', 'execution', 'finalization', 'inconsistent'],
+    message: str,
+    cause: BaseException | None = None,
+)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/types.py#L44)
+
+
+**Attributes**
+
+- `kind`: `Literal['cancelled', 'execution', 'finalization', 'inconsistent']`
+- `message`: `str`
+- `cause`: `BaseException | None`
+
+
+### ExecutionOutcome {#executionoutcome}
+
+_attribute_
+
+```python
+ExecutionOutcome: TypeAlias = Literal['completed', 'suspended', 'cancelled', 'failed', 'incomplete']
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/types.py#L10)
+
+
+### ExecutionRequest {#executionrequest}
+
+_attribute_
+
+```python
+ExecutionRequest: TypeAlias = PromptExecutionRequest | RespondExecutionRequest | ContinueExecutionRequest
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/types.py#L39)
+
+
+### ExecutionResult {#executionresult}
+
+_class_
+
+```python
+ExecutionResult(
+    run_id: str,
+    attempt_id: str,
+    outcome: ExecutionOutcome,
+    pending_request: HitlRequest | None = None,
+    error: ExecutionError | None = None,
+    checkpoint_committed: bool = False,
+    history_consistent: bool = True,
+    delivery_errors: tuple[DeliveryError, ...] = (),
+)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/types.py#L59)
+
+
+**Attributes**
+
+- `run_id`: `str`
+- `attempt_id`: `str`
+- `outcome`: `ExecutionOutcome`
+- `pending_request`: `HitlRequest | None`
+- `error`: `ExecutionError | None`
+- `checkpoint_committed`: `bool`
+- `history_consistent`: `bool`
+- `delivery_errors`: `tuple[DeliveryError, ...]`
+
+
+### PromptExecutionRequest {#promptexecutionrequest}
+
+_class_
+
+```python
+PromptExecutionRequest(
+    run_id: str,
+    attempt_id: str,
+    message: str | Message | list[Message],
+    kind: Literal['prompt'] = 'prompt',
+)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/types.py#L15)
+
+
+**Attributes**
+
+- `run_id`: `str`
+- `attempt_id`: `str`
+- `message`: `str | Message | list[Message]`
+- `kind`: `Literal['prompt']`
+
+
+### RespondExecutionRequest {#respondexecutionrequest}
+
+_class_
+
+```python
+RespondExecutionRequest(
+    run_id: str,
+    attempt_id: str,
+    answer: StructuredValue,
+    question_id: str | None = None,
+    kind: Literal['respond'] = 'respond',
+)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/types.py#L23)
+
+
+**Attributes**
+
+- `run_id`: `str`
+- `attempt_id`: `str`
+- `answer`: `StructuredValue`
+- `question_id`: `str | None`
+- `kind`: `Literal['respond']`
+
+
+### MessageView {#messageview}
+
+_class_
+
+```python
+MessageView(
+    role: str,
+    content: tuple[FrozenObject, ...],
+    metadata: Mapping[str, Any],
+    run_id: str | None,
+    _values: Mapping[str, Any],
+)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/turn_execution_context.py#L39)
+
+
+**Attributes**
+
+- `role`: `str`
+- `content`: `tuple[FrozenObject, ...]`
+- `metadata`: `Mapping[str, Any]`
+- `run_id`: `str | None`
+
+
+**Methods**
+
+#### `capture` {#messageview-capture}
+
+```python
+capture(cls, message: Message) -> MessageView
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/turn_execution_context.py#L53)
+
+
+
+### ToolExecutionBinding {#toolexecutionbinding}
+
+_class_
+
+```python
+ToolExecutionBinding(
+    name: str,
+    definition: FrozenObject,
+    parameters: type[BaseModel],
+    execute: Callable[..., Awaitable[AgentToolResult]],
+    hitl_builtin: bool,
+    execution_mode: Literal['sequential', 'parallel'] | None,
+    _source_id: int,
+)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/turn_execution_context.py#L70)
+
+
+**Attributes**
+
+- `name`: `str`
+- `definition`: `FrozenObject`
+- `parameters`: `type[BaseModel]`
+- `execute`: `Callable[..., Awaitable[AgentToolResult]]`
+- `hitl_builtin`: `bool`
+- `execution_mode`: `Literal['sequential', 'parallel'] | None`
+
+
+**Methods**
+
+#### `capture` {#toolexecutionbinding-capture}
+
+```python
+capture(cls, tool: AgentTool) -> ToolExecutionBinding
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/turn_execution_context.py#L80)
+
+
+
+### TurnExecutionContext {#turnexecutioncontext}
+
+_class_
+
+```python
+TurnExecutionContext(
+    turn_id: str,
+    run_id: str,
+    attempt_id: str,
+    model: FrozenObject,
+    reasoning: FrozenObject,
+    system_prompt: str,
+    messages: tuple[MessageView, ...],
+    tools: tuple[ToolExecutionBinding, ...],
+    policy_revision: str | None = None,
+    model_attempt_id: str | None = None,
+)
+```
+
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/turn_execution_context.py#L93)
+
+
+**Attributes**
+
+- `turn_id`: `str`
+- `run_id`: `str`
+- `attempt_id`: `str`
+- `model`: `FrozenObject`
+- `reasoning`: `FrozenObject`
+- `system_prompt`: `str`
+- `messages`: `tuple[MessageView, ...]`
+- `tools`: `tuple[ToolExecutionBinding, ...]`
+- `policy_revision`: `str | None`
+- `model_attempt_id`: `str | None`
+
+
+**Methods**
+
+#### `capture` {#turnexecutioncontext-capture}
+
+```python
+capture(
+    cls,
+    *,
+    turn_id: str,
+    run_id: str,
+    attempt_id: str,
+    model: Model,
+    reasoning: ReasoningControl,
+    system_prompt: str,
+    messages: list[Message],
+    tools: list[AgentTool] | None,
+    policy_revision: str | None = None,
+    model_attempt_id: str | None = None,
+) -> TurnExecutionContext
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/turn_execution_context.py#L106)
+
+
+#### `matches_model` {#turnexecutioncontext-matches-model}
+
+```python
+matches_model(model: Model, model_attempt_id: str | None) -> bool
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/turn_execution_context.py#L134)
+
+
+#### `binding_for` {#turnexecutioncontext-binding-for}
+
+```python
+binding_for(name: str) -> ToolExecutionBinding | None
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/turn_execution_context.py#L139)
+
+
+#### `extend` {#turnexecutioncontext-extend}
+
+```python
+extend(tool: AgentTool) -> TurnExecutionContext
+```
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/session/turn_execution_context.py#L142)
+
+
+
+
+<!-- GENERATED by build_api_reference.py — DO NOT EDIT -->
