@@ -13,7 +13,9 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CompactionMiddleware",
+    "CompactionResult",
     "CompactionState",
+    "compact_history",
     "GoalMiddleware",
     "ToolResultCompressor",
     "ToolResultLimitMiddleware",
@@ -38,7 +40,9 @@ __all__ = [
 
 _LAZY = {
     "CompactionMiddleware": ("cubeloop.middleware.compaction", "CompactionMiddleware"),
+    "CompactionResult": ("cubeloop.middleware.compaction", "CompactionResult"),
     "CompactionState": ("cubeloop.middleware.compaction", "CompactionState"),
+    "compact_history": ("cubeloop.middleware.compaction", "compact_history"),
     "ToolResultCompressor": ("cubeloop.middleware.compaction", "ToolResultCompressor"),
     "ToolResultLimitMiddleware": (
         "cubeloop.middleware.tool_result_limit",

@@ -7,7 +7,9 @@ import cubeloop.middleware as middleware
 
 def test_lazy_exports_resolve_builtin_middleware() -> None:
     assert middleware.CompactionMiddleware.__name__ == "CompactionMiddleware"
+    assert middleware.CompactionResult.__name__ == "CompactionResult"
     assert middleware.CompactionState.__name__ == "CompactionState"
+    assert middleware.compact_history.__name__ == "compact_history"
     assert middleware.SubagentMiddleware.__name__ == "SubagentMiddleware"
     assert middleware.SubagentSpec.__name__ == "SubagentSpec"
     assert middleware.ToolResultLimitMiddleware.__name__ == "ToolResultLimitMiddleware"

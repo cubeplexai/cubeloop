@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import ValidationError
@@ -155,6 +156,274 @@ def _state_matches_history(
     return refs == message_refs(messages[:boundary])
 
 
+def _effective_keep_tail(keep_tail_tokens: int, max_tokens_before: int | None) -> int:
+    """Clamp a tail budget that would swallow an entire over-threshold history.
+
+    At smaller budgets the configured value is used as given. The clamp only
+    applies when ``keep_tail_tokens`` is at least the trigger threshold.
+    """
+    if max_tokens_before is not None and keep_tail_tokens >= max_tokens_before:
+        return max(1, max_tokens_before // 2)
+    return keep_tail_tokens
+
+
+def _tokens_for_trigger(messages: list[Message], *, summary_in_effect: bool) -> int:
+    """Token fill used to decide whether compaction should run.
+
+    ``real_context_estimate`` is anchored to the last usage-bearing assistant
+    message and only counts what follows that anchor. That covers the prefix
+    while a summary is in effect. With the summary dropped it reports the size
+    of a history that is no longer the prompt being sent, so the character
+    estimate of the whole list is a floor. See #233.
+    """
+    tokens_now = real_context_estimate(messages)
+    if not summary_in_effect:
+        tokens_now = max(tokens_now, approx_tokens(messages))
+    return tokens_now
+
+
+class _ApplyPath:
+    LLM = "llm"
+    LLM_FAILED = "llm_failed"
+    FALLBACK = "fallback"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class _AppliedSummary:
+    path: str
+    state: CompactionState | None
+    pruned_messages: list[Message]
+    error: str | None = None
+
+
+async def _apply_summary(
+    history: list[Message],
+    *,
+    state: CompactionState | None,
+    boundary: int,
+    new_boundary: int,
+    model: BoundModel,
+    tail_start: int,
+    allow_llm: bool,
+    fallback_on_error: bool,
+    prune_tool_outputs: bool,
+    tool_result_compressor: ToolResultCompressor | None,
+    max_summary_tokens: int | None,
+    summary_prompt: str | None,
+    existing_summary_suffix: str | None,
+    abort_signal: asyncio.Event | None,
+) -> _AppliedSummary:
+    """Prune, summarize, and attach preserved tool results for one boundary."""
+    preserved: dict[int, str] = {}
+    if prune_tool_outputs:
+        pruned_messages, preserved = prune_tool_results(
+            history, tail_start=tail_start, compressor=tool_result_compressor
+        )
+    else:
+        pruned_messages = list(history)
+
+    preserved_indices = set(preserved.keys())
+    summarizer_messages = [
+        msg
+        for i, msg in enumerate(pruned_messages[boundary:new_boundary], start=boundary)
+        if i not in preserved_indices
+    ]
+    ref_messages = history[boundary:new_boundary]
+
+    path = _ApplyPath.LLM
+    error: str | None = None
+    new_state: CompactionState | None
+    if allow_llm:
+        try:
+            new_state = await summarize(
+                model=model,
+                messages_to_summarize=summarizer_messages,
+                ref_messages=ref_messages,
+                existing=state,
+                max_summary_tokens=max_summary_tokens,
+                system_prompt_override=summary_prompt,
+                existing_summary_suffix=existing_summary_suffix,
+                abort_signal=abort_signal,
+            )
+        except Exception as exc:  # noqa: BLE001
+            if not fallback_on_error:
+                return _AppliedSummary(
+                    _ApplyPath.FAILED, None, pruned_messages, error=str(exc)
+                )
+            path = _ApplyPath.LLM_FAILED
+            error = str(exc)
+            new_state = build_fallback_summary(
+                summarizer_messages,
+                ref_messages=ref_messages,
+                existing=state,
+            )
+    elif not fallback_on_error:
+        return _AppliedSummary(_ApplyPath.FAILED, None, pruned_messages)
+    else:
+        path = _ApplyPath.FALLBACK
+        new_state = build_fallback_summary(
+            summarizer_messages,
+            ref_messages=ref_messages,
+            existing=state,
+        )
+
+    prior_preserved = state.preserved_tool_results if state else []
+    new_preserved = [
+        PreservedToolResult(
+            tool_name=history[idx].tool_name,  # type: ignore[union-attr]
+            tool_call_id=history[idx].tool_call_id,  # type: ignore[union-attr]
+            text=text,
+        )
+        for idx, text in preserved.items()
+        if boundary <= idx < new_boundary
+    ]
+    new_state.preserved_tool_results = prior_preserved + new_preserved
+    return _AppliedSummary(path, new_state, pruned_messages, error=error)
+
+
+@dataclass(frozen=True)
+class CompactionResult:
+    """Outcome of :func:`compact_history`.
+
+    Persist ``state`` and ``boundary`` only when ``compacted`` is true. On
+    ``summarizer_failed``, ``state`` is ``None`` and nothing was summarized.
+    """
+
+    compacted: bool
+    reason: str | None
+    state: CompactionState | None
+    boundary: int
+    used_fallback: bool = False
+
+
+def _unchanged(
+    *,
+    reason: str,
+    state: CompactionState | None,
+    boundary: int,
+) -> CompactionResult:
+    return CompactionResult(
+        compacted=False,
+        reason=reason,
+        state=state,
+        boundary=boundary,
+    )
+
+
+async def compact_history(
+    messages: list[Message],
+    *,
+    model: BoundModel,
+    state: CompactionState | None = None,
+    boundary: int = 0,
+    keep_tail_tokens: int = 8_000,
+    min_compact_messages: int = 4,
+    max_summary_tokens: int | None = None,
+    max_tokens_before_compact: int | None = None,
+    force: bool = False,
+    fallback_on_error: bool = True,
+    prune_tool_outputs: bool = True,
+    tool_result_compressor: ToolResultCompressor | None = None,
+    summary_prompt: str | None = None,
+    existing_summary_suffix: str | None = None,
+    abort_signal: asyncio.Event | None = None,
+) -> CompactionResult:
+    """Summarize older turns outside an agent turn.
+
+    Uses the same tail, boundary, tool-result pruner, and summarizer as
+    :class:`CompactionMiddleware`. ``force=True`` skips the token threshold so
+    a caller can compact idle history that is still under the window. The
+    circuit breaker and anti-thrash guard stay on the middleware: they track
+    repeated in-run attempts, and this function runs once.
+
+    ``fallback_on_error=False`` returns ``reason="summarizer_failed"`` without
+    a fallback summary. The default matches the middleware and still compacts
+    when the model call fails.
+
+    The returned ``boundary`` indexes ``messages``. A trailing suffix of
+    synthetic user messages is left out of the boundary calculation, same as
+    the middleware, and because that suffix is at the end the index is still a
+    position in ``messages``. This function does not write a checkpointer.
+    """
+    history, trailing_controls = _split_trailing_synthetic_user_controls(messages)
+    if not history:
+        return _unchanged(reason="empty", state=None, boundary=0)
+
+    if (
+        boundary < 0
+        or boundary >= len(history)
+        or not _state_matches_history(history, state, boundary)
+    ):
+        if state is not None or boundary > 0:
+            logger.warning(
+                "compact_history: dropping compaction state "
+                "(boundary=%d, history=%d) — the persisted summary no longer "
+                "matches this history",
+                boundary,
+                len(history),
+            )
+        boundary = 0
+        state = None
+
+    if len(history) < min_compact_messages:
+        return _unchanged(reason="too_short", state=state, boundary=boundary)
+
+    threshold = None if force else max_tokens_before_compact
+    tail_budget = _effective_keep_tail(keep_tail_tokens, threshold)
+    tail_start = tail_start_by_tokens(history, tail_budget)
+    if threshold is not None:
+        view = [
+            *_compressed_view(history, state, boundary),
+            *trailing_controls,
+        ]
+        tokens_now = _tokens_for_trigger(
+            view, summary_in_effect=state is not None and boundary > 0
+        )
+        if tokens_now < threshold:
+            return _unchanged(reason="below_threshold", state=state, boundary=boundary)
+
+    new_boundary = safe_boundary(
+        history,
+        tail_start=tail_start,
+        min_compact=max(min_compact_messages, boundary + 1),
+    )
+    if new_boundary is None or new_boundary <= boundary:
+        return _unchanged(reason="no_boundary", state=state, boundary=boundary)
+
+    applied = await _apply_summary(
+        history,
+        state=state,
+        boundary=boundary,
+        new_boundary=new_boundary,
+        model=model,
+        tail_start=tail_start,
+        allow_llm=True,
+        fallback_on_error=fallback_on_error,
+        prune_tool_outputs=prune_tool_outputs,
+        tool_result_compressor=tool_result_compressor,
+        max_summary_tokens=max_summary_tokens,
+        summary_prompt=summary_prompt,
+        existing_summary_suffix=existing_summary_suffix,
+        abort_signal=abort_signal,
+    )
+    if applied.path == _ApplyPath.FAILED or applied.state is None:
+        logger.warning("compact_history summariser failed: %s", applied.error)
+        return CompactionResult(
+            compacted=False,
+            reason="summarizer_failed",
+            state=None,
+            boundary=boundary,
+        )
+    return CompactionResult(
+        compacted=True,
+        reason=None,
+        state=applied.state,
+        boundary=new_boundary,
+        used_fallback=applied.path != _ApplyPath.LLM,
+    )
+
+
 class CompactionMiddleware(Middleware):
     """Keep long histories within context by summarizing older turns.
 
@@ -236,10 +505,9 @@ class CompactionMiddleware(Middleware):
         # smaller tail budgets the configured value is honoured verbatim:
         # the caller knows their threshold and how much recent context
         # they want preserved.
-        if self._keep_tail_tokens >= self._max_tokens_before:
-            effective_tail_tokens = max(1, self._max_tokens_before // 2)
-        else:
-            effective_tail_tokens = self._keep_tail_tokens
+        effective_tail_tokens = _effective_keep_tail(
+            self._keep_tail_tokens, self._max_tokens_before
+        )
         tail_start = tail_start_by_tokens(history, effective_tail_tokens)
 
         # Threshold check uses the UN-pruned view. Pre-pruning is a pre-pass
@@ -255,33 +523,13 @@ class CompactionMiddleware(Middleware):
             *_compressed_view(history, state, boundary),
             *trailing_controls,
         ]
-        tokens_now = real_context_estimate(unpruned_compressed)
-        if state is None or boundary <= 0:
-            # No summary is in effect, so ``unpruned_compressed`` IS the raw
-            # history and ``real_context_estimate`` cannot be trusted for it.
-            # That function is anchored to the most recent usage-bearing
-            # assistant and only adds the char estimate of what follows that
-            # anchor: every message *before* the anchor is assumed to be
-            # accounted for by the anchor's own ``input_tokens``. That holds
-            # only while the anchored turn's prompt is still the prompt being
-            # sent — i.e. while a summary covers the prefix. With the summary
-            # dropped it reports the size of a history that no longer exists.
-            #
-            # Measured on the 901-message conversation from #233: 57,278 tokens
-            # for the compacted view AND 57,278 for the raw history that
-            # replaced it, while the actual send was >= 256,001 tokens. The
-            # threshold check saw 57,278 < 80,281, returned the raw history
-            # without compacting, and the provider answered
-            # ``ContextLengthExceeded``.
-            #
-            # The char estimate does see the whole list, so it acts as a floor
-            # here. It is deliberately a floor and not the estimate itself, and
-            # deliberately only when no summary is in effect: its conservative
-            # chars-per-token ratio over-reads prose, which would double-trigger
-            # compaction on an ordinary compacted view. This mirrors the
-            # anti-thrash guard below, which already sizes the raw history with
-            # ``approx_tokens``.
-            tokens_now = max(tokens_now, approx_tokens(unpruned_compressed))
+        # No summary in effect: ``real_context_estimate`` does not see the
+        # prefix (the #233 outage). ``_tokens_for_trigger`` uses the character
+        # estimate as a floor only in that case.
+        tokens_now = _tokens_for_trigger(
+            unpruned_compressed,
+            summary_in_effect=state is not None and boundary > 0,
+        )
         if tokens_now < self._max_tokens_before:
             return unpruned_compressed
 
@@ -343,80 +591,46 @@ class CompactionMiddleware(Middleware):
             logger.debug("CompactionMiddleware: skipping — low savings guard active")
             return unpruned_compressed
 
-        # Committed to compacting — apply pre-pruning now. Skip entirely when
-        # ``prune_tool_outputs=False`` (audit-chain agents that need full
-        # historical tool results preserved).
-        preserved: dict[int, str] = {}
-        if self._prune_tool_outputs:
-            pruned_messages, preserved = prune_tool_results(
-                history, tail_start=tail_start, compressor=self._compressor
+        # Committed to compacting. Pruning stays inside ``_apply_summary`` so
+        # a bailout above cannot return a pruned view with no recorded state.
+        applied = await _apply_summary(
+            history,
+            state=state,
+            boundary=boundary,
+            new_boundary=new_boundary,
+            model=self._summary_model,
+            tail_start=tail_start,
+            allow_llm=llm_allowed,
+            fallback_on_error=True,
+            prune_tool_outputs=self._prune_tool_outputs,
+            tool_result_compressor=self._compressor,
+            max_summary_tokens=self._max_summary_tokens,
+            summary_prompt=self._summary_prompt,
+            existing_summary_suffix=self._existing_summary_suffix,
+            abort_signal=signal,
+        )
+        if applied.state is None:
+            return unpruned_compressed
+        new_state = applied.state
+        pruned_messages = applied.pruned_messages
+        if applied.path == _ApplyPath.LLM:
+            ctx.extra["compaction_failures"] = 0
+            ctx.extra["compaction_fallback_runs"] = 0
+        elif applied.path == _ApplyPath.LLM_FAILED:
+            logger.warning(
+                "CompactionMiddleware LLM summariser failed: %s", applied.error
             )
+            # Half-open retry that fails re-opens the breaker; a normal
+            # failure just increments toward open.
+            ctx.extra["compaction_failures"] = (
+                _MAX_FAILURES if half_open_retry else failures + 1
+            )
+            # The LLM was just attempted — restart the half-open wait.
+            ctx.extra["compaction_fallback_runs"] = 0
         else:
-            pruned_messages = list(history)
-
-        # Filter preserved messages out of summarizer input — their content
-        # is attached verbatim to the summary, so summarizing them would be
-        # redundant and waste the summary token budget.
-        preserved_indices = set(preserved.keys())
-        summarizer_messages = [
-            msg
-            for i, msg in enumerate(
-                pruned_messages[boundary:new_boundary], start=boundary
-            )
-            if i not in preserved_indices
-        ]
-
-        if llm_allowed:
-            try:
-                new_state = await summarize(
-                    model=self._summary_model,
-                    messages_to_summarize=summarizer_messages,
-                    ref_messages=history[boundary:new_boundary],
-                    existing=state,
-                    max_summary_tokens=self._max_summary_tokens,
-                    system_prompt_override=self._summary_prompt,
-                    existing_summary_suffix=self._existing_summary_suffix,
-                    abort_signal=signal,
-                )
-                # Full reset on LLM success.
-                ctx.extra["compaction_failures"] = 0
-                ctx.extra["compaction_fallback_runs"] = 0
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("CompactionMiddleware LLM summariser failed: %s", exc)
-                # Half-open retry that fails re-opens the breaker; a normal
-                # failure just increments toward open.
-                ctx.extra["compaction_failures"] = (
-                    _MAX_FAILURES if half_open_retry else failures + 1
-                )
-                new_state = build_fallback_summary(
-                    summarizer_messages,
-                    ref_messages=history[boundary:new_boundary],
-                    existing=state,
-                )
-                # The LLM was just attempted — restart the half-open wait.
-                ctx.extra["compaction_fallback_runs"] = 0
-        else:
-            new_state = build_fallback_summary(
-                summarizer_messages,
-                ref_messages=history[boundary:new_boundary],
-                existing=state,
-            )
             ctx.extra["compaction_fallback_runs"] = (
                 _load_int(ctx.extra.get("compaction_fallback_runs"), 0) + 1
             )
-
-        # Accumulate preserved tool results from this round into the state.
-        prior_preserved = state.preserved_tool_results if state else []
-        new_preserved = [
-            PreservedToolResult(
-                tool_name=history[idx].tool_name,  # type: ignore[union-attr]
-                tool_call_id=history[idx].tool_call_id,  # type: ignore[union-attr]
-                text=text,
-            )
-            for idx, text in preserved.items()
-            if boundary <= idx < new_boundary
-        ]
-        new_state.preserved_tool_results = prior_preserved + new_preserved
 
         ctx.extra["compaction"] = new_state.model_dump()
         ctx.extra["compaction_until_msg_index"] = new_boundary
@@ -447,7 +661,9 @@ class CompactionMiddleware(Middleware):
 
 __all__ = [
     "CompactionMiddleware",
+    "CompactionResult",
     "CompactionState",
     "SUMMARY_PREFIX",
     "ToolResultCompressor",
+    "compact_history",
 ]
