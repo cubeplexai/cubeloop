@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from cubeloop.middleware.compaction import compact_history
-from cubeloop.middleware.compaction.state import CompactionState
+from cubeloop.middleware.compaction.state import CompactionState, message_refs
 from cubeloop.providers.base import (
     AssistantMessage,
     BoundModel,
@@ -125,6 +125,32 @@ async def test_summarizer_failure_does_not_fallback_when_disabled() -> None:
     assert result.reason == "summarizer_failed"
     assert result.state is None
     assert result.used_fallback is False
+
+
+async def test_summarizer_failure_keeps_a_valid_existing_state() -> None:
+    provider = _FakeSummaryProvider(raises=RuntimeError("model down"))
+    messages = [_user(f"turn {i}") for i in range(6)]
+    boundary = 2
+    existing = CompactionState(
+        summary="KEEP_ME",
+        summarized_message_refs=message_refs(messages[:boundary]),
+    )
+
+    result = await compact_history(
+        messages,
+        model=_model(provider),
+        state=existing,
+        boundary=boundary,
+        keep_tail_tokens=1,
+        min_compact_messages=2,
+        force=True,
+        fallback_on_error=False,
+    )
+
+    assert result.compacted is False
+    assert result.reason == "summarizer_failed"
+    assert result.state is existing
+    assert result.boundary == boundary
 
 
 async def test_summarizer_failure_uses_fallback_by_default() -> None:

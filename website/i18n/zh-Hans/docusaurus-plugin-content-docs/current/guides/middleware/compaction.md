@@ -216,8 +216,9 @@ if result.compacted and result.state is not None:
 `force=False` 且设置了 `max_tokens_before_compact` 时，如果和 middleware
 相同的触发判断认为历史还放得下，返回 `reason="below_threshold"`。熔断器和
 防抖留在 `CompactionMiddleware` 上，它们统计的是一轮里的重复尝试。
-`fallback_on_error=False` 返回 `reason="summarizer_failed"`，不写 fallback
-摘要。默认值仍会生成确定性 fallback，这样模型不可用时单次调用也能收缩上下文。
+`fallback_on_error=False` 返回 `reason="summarizer_failed"`，不写新摘要。
+`state` 和 `boundary` 仍是当前有效的那一对。默认值仍会生成确定性
+fallback，这样模型不可用时单次调用也能收缩上下文。
 
 末尾一串 synthetic user 消息不参与边界计算，和 middleware 对待当次调用控制
 消息的方式相同。返回的 `boundary` 仍然是 `messages` 里的下标。

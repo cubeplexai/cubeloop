@@ -291,8 +291,9 @@ async def _apply_summary(
 class CompactionResult:
     """Outcome of :func:`compact_history`.
 
-    Persist ``state`` and ``boundary`` only when ``compacted`` is true. On
-    ``summarizer_failed``, ``state`` is ``None`` and nothing was summarized.
+    Persist ``state`` and ``boundary`` only when ``compacted`` is true.
+    Otherwise they are the pair still in effect, after a drifted pair has
+    been dropped. A failed summary does not clear a valid existing pair.
     """
 
     compacted: bool
@@ -343,8 +344,9 @@ async def compact_history(
     repeated in-run attempts, and this function runs once.
 
     ``fallback_on_error=False`` returns ``reason="summarizer_failed"`` without
-    a fallback summary. The default matches the middleware and still compacts
-    when the model call fails.
+    a fallback summary. ``state`` and ``boundary`` stay the pair still in
+    effect. The default matches the middleware and still compacts when the
+    model call fails.
 
     The returned ``boundary`` indexes ``messages``. A trailing suffix of
     synthetic user messages is left out of the boundary calculation, same as
@@ -414,12 +416,7 @@ async def compact_history(
     )
     if applied.path == _ApplyPath.FAILED or applied.state is None:
         logger.warning("compact_history summariser failed: %s", applied.error)
-        return CompactionResult(
-            compacted=False,
-            reason="summarizer_failed",
-            state=None,
-            boundary=boundary,
-        )
+        return _unchanged(reason="summarizer_failed", state=state, boundary=boundary)
     return CompactionResult(
         compacted=True,
         reason=None,
