@@ -148,8 +148,13 @@ def _state_matches_history(
     state: CompactionState | None,
     boundary: int,
 ) -> bool:
-    if state is None or boundary <= 0:
+    # Both must be empty together. A boundary with no state, or a state with
+    # no boundary, would make the next turn see len(refs) != boundary and
+    # drop the summary.
+    if state is None and boundary <= 0:
         return True
+    if state is None or boundary <= 0:
+        return False
     refs = state.summarized_message_refs
     if len(refs) != boundary:
         return False

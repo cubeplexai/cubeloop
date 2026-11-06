@@ -310,6 +310,28 @@ async def test_malformed_persisted_state_is_cleared() -> None:
     assert "compaction_until_msg_index" not in ctx.extra
 
 
+async def test_state_without_a_boundary_is_cleared() -> None:
+    provider = _FakeSummaryProvider()
+    middleware = _make_middleware(provider, max_tokens_before=100_000)
+    messages: list[Message] = [_user("only")]
+    ctx = AgentContext(
+        system_prompt="",
+        messages=messages,
+        extra={
+            "compaction": CompactionState(
+                summary="orphan",
+                summarized_message_refs=["sha256:nope"],
+            ).model_dump(),
+        },
+    )
+
+    result = await middleware.transform_context(messages, ctx=ctx)
+
+    assert result == messages
+    assert "compaction" not in ctx.extra
+    assert provider.calls == []
+
+
 # --- Task 6: circuit breaker, anti-thrashing, refs survive pruning ---
 
 
