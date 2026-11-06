@@ -190,6 +190,39 @@ agent 不会因为 summariser 模型故障而卡在超限状态。下一次 LLM 
 所以 prompt caching 无法掩盖一个真正超限的上下文；此外边界能前进 ≥ 8 条消息、
 或一次压缩节省 ≥ 10% 时也会解除。
 
+## 在一轮之外压缩
+
+`compact_history` 用和 middleware 相同的尾部预算、边界、工具结果预剪枝和
+summarizer，只跑一次，不经过 agent turn。显式压缩命令用它。它不读也不写
+checkpointer：只有 `compacted` 为真时才持久化 `state` 和 `boundary`。
+
+```python
+from cubeloop.middleware.compaction import compact_history
+
+result = await compact_history(
+    messages,
+    model=summary_model,
+    state=existing_state,
+    boundary=previous_boundary,
+    keep_tail_tokens=8_000,
+    force=True,                 # 忽略 token 阈值
+    fallback_on_error=False,    # 模型失败则不改历史
+)
+if result.compacted and result.state is not None:
+    extra["compaction"] = result.state.model_dump(mode="json")
+    extra["compaction_until_msg_index"] = result.boundary
+```
+
+`force=False` 且设置了 `max_tokens_before_compact` 时，如果和 middleware
+相同的触发判断认为历史还放得下，返回 `reason="below_threshold"`。熔断器和
+防抖留在 `CompactionMiddleware` 上，它们统计的是一轮里的重复尝试。
+`fallback_on_error=False` 返回 `reason="summarizer_failed"`，不写新摘要。
+`state` 和 `boundary` 仍是当前有效的那一对。默认值仍会生成确定性
+fallback，这样模型不可用时单次调用也能收缩上下文。
+
+末尾一串 synthetic user 消息不参与边界计算，和 middleware 对待当次调用控制
+消息的方式相同。返回的 `boundary` 仍然是 `messages` 里的下标。
+
 ## 限制超大工具结果
 
 压缩总结的是*旧*历史，但它无法缩小一个模型在**当前**轮必须读取的单个工具

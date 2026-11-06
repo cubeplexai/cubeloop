@@ -294,7 +294,7 @@ Three layered guards keep the summariser from misbehaving under load:
   boundary advances by `_ANTI_THRASH_NEW_MSGS` messages, or raw
   history exceeds `max_tokens_before_compact * _ANTI_THRASH_FORCE_RATIO`.
 
-[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/compaction/__init__.py#L158)
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/compaction/__init__.py#L429)
 
 
 **Methods**
@@ -310,7 +310,7 @@ transform_context(
 ) -> list[Message]
 ```
 
-[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/compaction/__init__.py#L197)
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/compaction/__init__.py#L468)
 
 
 #### `extra_llm_calls` {#compactionmiddleware-extra-llm-calls}
@@ -319,8 +319,40 @@ transform_context(
 extra_llm_calls() -> tuple[BoundModel, ...]
 ```
 
-[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/compaction/__init__.py#L438)
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/compaction/__init__.py#L654)
 
+
+
+### CompactionResult {#compactionresult}
+
+_class_
+
+```python
+CompactionResult(
+    compacted: bool,
+    reason: str | None,
+    state: CompactionState | None,
+    boundary: int,
+    used_fallback: bool = False,
+)
+```
+
+Outcome of [`compact_history`](./cubeloop-middleware#compact-history).
+
+Persist `state` and `boundary` only when `compacted` is true.
+Otherwise they are the pair still in effect, after a drifted pair has
+been dropped. A failed summary does not clear a valid existing pair.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/compaction/__init__.py#L290)
+
+
+**Attributes**
+
+- `compacted`: `bool`
+- `reason`: `str | None`
+- `state`: `CompactionState | None`
+- `boundary`: `int`
+- `used_fallback`: `bool`
 
 
 ### CompactionState {#compactionstate}
@@ -340,6 +372,52 @@ JSON-safe summary state stored in `AgentContext.extra`.
 - `last_summarized_message_id`: `str | None`
 - `is_fallback`: `bool`
 - `preserved_tool_results`: `list[PreservedToolResult]`
+
+
+### compact_history {#compact-history}
+
+_function_
+
+```python
+compact_history(
+    messages: list[Message],
+    *,
+    model: BoundModel,
+    state: CompactionState | None = None,
+    boundary: int = 0,
+    keep_tail_tokens: int = 8000,
+    min_compact_messages: int = 4,
+    max_summary_tokens: int | None = None,
+    max_tokens_before_compact: int | None = None,
+    force: bool = False,
+    fallback_on_error: bool = True,
+    prune_tool_outputs: bool = True,
+    tool_result_compressor: ToolResultCompressor | None = None,
+    summary_prompt: str | None = None,
+    existing_summary_suffix: str | None = None,
+    abort_signal: asyncio.Event | None = None,
+) -> CompactionResult
+```
+
+Summarize older turns outside an agent turn.
+
+Uses the same tail, boundary, tool-result pruner, and summarizer as
+[`CompactionMiddleware`](./cubeloop-middleware#compactionmiddleware). `force=True` skips the token threshold so
+a caller can compact idle history that is still under the window. The
+circuit breaker and anti-thrash guard stay on the middleware: they track
+repeated in-run attempts, and this function runs once.
+
+`fallback_on_error=False` returns `reason="summarizer_failed"` without
+a fallback summary. `state` and `boundary` stay the pair still in
+effect. The default matches the middleware and still compacts when the
+model call fails.
+
+The returned `boundary` indexes `messages`. A trailing suffix of
+synthetic user messages is left out of the boundary calculation, same as
+the middleware, and because that suffix is at the end the index is still a
+position in `messages`. This function does not write a checkpointer.
+
+[source](https://github.com/cubeplexai/cubeloop/blob/main/cubeloop/middleware/compaction/__init__.py#L320)
 
 
 ### GoalMiddleware {#goalmiddleware}

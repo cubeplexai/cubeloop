@@ -81,5 +81,10 @@ empty upstream model completions as retryable `EmptyCompletion` errors. See
 [MCP Tool Loading](./guides/mcp/loading.md) and the
 [API Reference](./api/index.mdx).
 
+0.16.1 adds `compact_history` for one-shot compaction outside an agent turn,
+rejects drifted compaction state and boundary pairs, and keeps the current
+summary when a one-shot compact fails. See
+[Compaction](./guides/middleware/compaction.md).
+
 Source, issues, and discussion live on
 [GitHub](https://github.com/cubeplexai/cubeloop).

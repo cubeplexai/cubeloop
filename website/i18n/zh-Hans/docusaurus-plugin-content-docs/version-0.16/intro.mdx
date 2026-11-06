@@ -74,5 +74,7 @@ CubeLoop 0.16 升级到 MCP Python SDK 2.x 并采用高层 Client auto 模式，
 `EmptyCompletion` 异常。详见[MCP 工具加载](./guides/mcp/loading.md)和
 [API 参考](./api/index.mdx)。
 
+0.16.1 增加 `compact_history` 供一轮之外运行单次压缩，拒绝漂移的压缩状态和边界对，并在单次压缩失败时保留当前生效的摘要。见[上下文压缩](./guides/middleware/compaction.md)。
+
 源代码、Issue 和讨论都在
 [GitHub](https://github.com/cubeplexai/cubeloop)。

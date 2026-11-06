@@ -304,6 +304,43 @@ real cache-aware token count, so prompt caching can't hide a genuinely
 over-limit context — when the boundary would advance ≥ 8 messages, or when a
 later compaction does save ≥ 10%.
 
+## Compact outside a turn
+
+`compact_history` runs the same tail, boundary, tool-result pruner, and
+summarizer once, without an agent turn. Hosts use it for an explicit compact
+command. It does not read or write a checkpointer: persist `state` and
+`boundary` only when `compacted` is true.
+
+```python
+from cubeloop.middleware.compaction import compact_history
+
+result = await compact_history(
+    messages,
+    model=summary_model,
+    state=existing_state,
+    boundary=previous_boundary,
+    keep_tail_tokens=8_000,
+    force=True,                 # ignore the token threshold
+    fallback_on_error=False,    # leave history unchanged if the model fails
+)
+if result.compacted and result.state is not None:
+    extra["compaction"] = result.state.model_dump(mode="json")
+    extra["compaction_until_msg_index"] = result.boundary
+```
+
+`force=False` with `max_tokens_before_compact` set returns
+`reason="below_threshold"` when the same trigger the middleware uses says the
+history still fits. The circuit breaker and anti-thrash guard stay on
+`CompactionMiddleware`; they count repeated attempts inside a run.
+`fallback_on_error=False` returns `reason="summarizer_failed"` and no new
+summary. `state` and `boundary` stay the pair still in effect.
+The default still builds the deterministic fallback so a single call can
+shrink context when the model is down.
+
+A trailing suffix of synthetic user messages is left out of the boundary, the
+same way the middleware treats call-local controls. The returned `boundary`
+is still an index into `messages`.
+
 ## Bounding oversized tool results
 
 Compaction summarizes *old* history, but it can't shrink a single tool result
