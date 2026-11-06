@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   state with a retained boundary, or a state with boundary 0, is treated as
   drifted and summarized again from the start. Leaving the pair half-set
   made the next turn drop the summary.
+- **A failed `compact_history` keeps the summary already in effect.** With
+  `fallback_on_error=False`, `state` and `boundary` stay that pair instead of
+  coming back as `state=None` beside the old boundary.
 
 ## [0.16.0] - 2026-10-28
 

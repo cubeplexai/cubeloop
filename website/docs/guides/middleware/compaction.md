@@ -332,7 +332,8 @@ if result.compacted and result.state is not None:
 `reason="below_threshold"` when the same trigger the middleware uses says the
 history still fits. The circuit breaker and anti-thrash guard stay on
 `CompactionMiddleware`; they count repeated attempts inside a run.
-`fallback_on_error=False` returns `reason="summarizer_failed"` and no summary.
+`fallback_on_error=False` returns `reason="summarizer_failed"` and no new
+summary. `state` and `boundary` stay the pair still in effect.
 The default still builds the deterministic fallback so a single call can
 shrink context when the model is down.
 
