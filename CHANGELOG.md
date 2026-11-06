@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`compact_history` for one-shot compaction outside an agent turn.** It uses
+  the same tail, boundary, tool-result pruner, and summarizer as
+  `CompactionMiddleware`. `force=True` skips the token threshold.
+  `fallback_on_error=False` returns `reason="summarizer_failed"` and no
+  summary. The circuit breaker and anti-thrash guard stay on the middleware.
+
 ## [0.16.0] - 2026-10-28
 
 ### Breaking
