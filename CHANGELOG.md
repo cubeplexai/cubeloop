@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `fallback_on_error=False` returns `reason="summarizer_failed"` and no
   summary. The circuit breaker and anti-thrash guard stay on the middleware.
 
+### Fixed
+
+- **A compaction state and its boundary must both be present.** A missing
+  state with a retained boundary, or a state with boundary 0, is treated as
+  drifted and summarized again from the start. Leaving the pair half-set
+  made the next turn drop the summary.
+
 ## [0.16.0] - 2026-10-28
 
 ### Breaking

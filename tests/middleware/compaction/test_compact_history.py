@@ -281,3 +281,50 @@ async def test_stale_boundary_is_dropped_before_summarizing(caplog: Any) -> None
     assert result.state is not None
     assert result.state.summary == "fresh"
     assert "dropping compaction state" in caplog.text
+
+
+async def test_missing_state_with_a_boundary_restarts_from_the_prefix() -> None:
+    provider = _FakeSummaryProvider(reply="from start")
+    messages = [_user(f"turn {i}") for i in range(6)]
+
+    result = await compact_history(
+        messages,
+        model=_model(provider),
+        state=None,
+        boundary=3,
+        keep_tail_tokens=1,
+        min_compact_messages=2,
+        force=True,
+        fallback_on_error=False,
+    )
+
+    assert result.compacted is True
+    assert result.state is not None
+    assert result.boundary == 5
+    assert len(result.state.summarized_message_refs) == result.boundary
+    assert "turn 0" in _transcript(provider)
+
+
+async def test_state_with_zero_boundary_does_not_keep_the_old_refs() -> None:
+    provider = _FakeSummaryProvider(reply="fresh")
+    messages = [_user(f"turn {i}") for i in range(6)]
+    orphan = CompactionState(
+        summary="OLD_SUMMARY_TEXT",
+        summarized_message_refs=["sha256:old-a", "sha256:old-b"],
+    )
+
+    result = await compact_history(
+        messages,
+        model=_model(provider),
+        state=orphan,
+        boundary=0,
+        keep_tail_tokens=1,
+        min_compact_messages=2,
+        force=True,
+        fallback_on_error=False,
+    )
+
+    assert result.compacted is True
+    assert result.state is not None
+    assert len(result.state.summarized_message_refs) == result.boundary
+    assert "OLD_SUMMARY_TEXT" not in provider.calls[0]["system_prompt"]
