@@ -1092,3 +1092,45 @@ class TestRefusalHandling:
             assert len(result.content) == 1
             assert isinstance(result.content[0], TextContent)
             assert "cannot help" in result.content[0].text
+
+
+class TestOpenAIResponsesToolResultImages:
+    """ToolResultMessage ImageContent serialization in OpenAI Responses API."""
+
+    def test_image_content_in_tool_result(self):
+        messages = [
+            ToolResultMessage(
+                tool_call_id="call_1|fc_1",
+                tool_name="view_images",
+                content=[
+                    TextContent(text="Loaded 1 image(s):"),
+                    ImageContent(source="imgb64", media_type="image/jpeg"),
+                ],
+            ),
+            ToolResultMessage(
+                tool_call_id="call_2",
+                tool_name="read",
+                content=[TextContent(text="plain text")],
+            ),
+        ]
+
+        api_input = OpenAIResponsesProvider._build_input(messages)
+
+        assert api_input == [
+            {
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": [
+                    {"type": "input_text", "text": "Loaded 1 image(s):"},
+                    {
+                        "type": "input_image",
+                        "image_url": "data:image/jpeg;base64,imgb64",
+                    },
+                ],
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "call_2",
+                "output": "plain text",
+            },
+        ]

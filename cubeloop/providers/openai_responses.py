@@ -700,12 +700,30 @@ class OpenAIResponsesProvider(BaseProvider):
             elif isinstance(msg, ToolResultMessage):
                 parts = msg.tool_call_id.split("|", 1)
                 call_id = parts[0]
-                text_parts = [c.text for c in msg.content if isinstance(c, TextContent)]
+                has_image = any(isinstance(c, ImageContent) for c in msg.content)
+                if has_image:
+                    output_parts: list[dict[str, Any]] = []
+                    for c in msg.content:
+                        if isinstance(c, TextContent):
+                            output_parts.append({"type": "input_text", "text": c.text})
+                        elif isinstance(c, ImageContent):
+                            output_parts.append(
+                                {
+                                    "type": "input_image",
+                                    "image_url": f"data:{c.media_type};base64,{c.source}",
+                                }
+                            )
+                    output: str | list[dict[str, Any]] = output_parts
+                else:
+                    text_parts = [
+                        c.text for c in msg.content if isinstance(c, TextContent)
+                    ]
+                    output = "\n".join(text_parts)
                 api_input.append(
                     {
                         "type": "function_call_output",
                         "call_id": call_id,
-                        "output": "\n".join(text_parts),
+                        "output": output,
                     }
                 )
 
