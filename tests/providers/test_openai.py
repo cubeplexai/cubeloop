@@ -1102,12 +1102,97 @@ class TestOpenAIToolResultImages:
             "content": "file contents",
         }
         assert converted[3]["content"] == [
-            {"type": "text", "text": "Images from tool results:"},
+            {"type": "text", "text": "Images from view_images (call_1):"},
             {
                 "type": "image_url",
                 "image_url": {"url": "data:image/jpeg;base64,imgdata1"},
             },
         ]
+
+    def test_parallel_tool_results_with_images_attributed_per_call(self):
+        messages = [
+            AssistantMessage(
+                content=[
+                    ToolCall(
+                        id="call_1", name="view_images", arguments={"paths": ["a.png"]}
+                    ),
+                    ToolCall(id="call_2", name="screenshot", arguments={}),
+                ]
+            ),
+            ToolResultMessage(
+                tool_call_id="call_1",
+                tool_name="view_images",
+                content=[
+                    TextContent(text="Loaded a.png"),
+                    ImageContent(source="img1", media_type="image/png"),
+                ],
+            ),
+            ToolResultMessage(
+                tool_call_id="call_2",
+                tool_name="screenshot",
+                content=[
+                    TextContent(text="Captured screen"),
+                    ImageContent(source="img2", media_type="image/jpeg"),
+                ],
+            ),
+        ]
+
+        converted = OpenAIProvider._convert_messages(messages)
+
+        assert [m["role"] for m in converted] == ["assistant", "tool", "tool", "user"]
+        assert converted[3]["content"] == [
+            {"type": "text", "text": "Images from view_images (call_1):"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,img1"}},
+            {"type": "text", "text": "Images from screenshot (call_2):"},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,img2"}},
+        ]
+
+    def test_mid_conversation_flush_clears_pending_images(self):
+        messages = [
+            AssistantMessage(
+                content=[ToolCall(id="call_1", name="view_images", arguments={})]
+            ),
+            ToolResultMessage(
+                tool_call_id="call_1",
+                tool_name="view_images",
+                content=[
+                    TextContent(text="Loaded 1 image(s):"),
+                    ImageContent(source="img1", media_type="image/jpeg"),
+                ],
+            ),
+            AssistantMessage(content=[TextContent(text="I see the image.")]),
+            UserMessage(content=[TextContent(text="Now run echo")]),
+            AssistantMessage(
+                content=[ToolCall(id="call_2", name="echo", arguments={})]
+            ),
+            ToolResultMessage(
+                tool_call_id="call_2",
+                tool_name="echo",
+                content=[TextContent(text="done")],
+            ),
+        ]
+
+        converted = OpenAIProvider._convert_messages(messages)
+
+        assert [m["role"] for m in converted] == [
+            "assistant",
+            "tool",
+            "user",
+            "assistant",
+            "user",
+            "assistant",
+            "tool",
+        ]
+        assert converted[2]["content"] == [
+            {"type": "text", "text": "Images from view_images (call_1):"},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,img1"}},
+        ]
+        assert converted[4] == {"role": "user", "content": "Now run echo"}
+        assert converted[6] == {
+            "role": "tool",
+            "tool_call_id": "call_2",
+            "content": "done",
+        }
 
     def test_text_only_tool_result_adds_no_user_message(self):
         messages = [
