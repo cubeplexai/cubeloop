@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.2] - 2026-11-23
+
+### Fixed
+
+- **Providers serialize `ImageContent` in `ToolResultMessage` across all backends (`#258`).**
+  Previously only `TextContent` blocks in tool results were forwarded, silently
+  dropping images returned by tools. `AnthropicProvider` now emits `image`
+  blocks inside `tool_result`, `OpenAIResponsesProvider` emits `input_image`
+  parts inside `function_call_output`, and `OpenAIProvider` (Chat Completions)
+  flushes attributed `image_url` parts in a synthetic `user` message right
+  after the contiguous `tool` block so `tool_call_id` adjacency is preserved.
+
 ## [0.16.1] - 2026-11-05
 
 ### Added
@@ -978,7 +990,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **[0.2.0]** - 2026-05-10 — see the [release notes](https://github.com/cubeplexai/cubepi/releases/tag/v0.2.0).
 - **[0.1.0]** - 2026-05-09 — initial release. See the [release notes](https://github.com/cubeplexai/cubepi/releases/tag/v0.1.0).
 
-[Unreleased]: https://github.com/cubeplexai/cubeloop/compare/v0.16.1...HEAD
+[Unreleased]: https://github.com/cubeplexai/cubeloop/compare/v0.16.2...HEAD
+[0.16.2]: https://github.com/cubeplexai/cubeloop/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/cubeplexai/cubeloop/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/cubeplexai/cubeloop/compare/v0.15.3...v0.16.0
 [0.15.3]: https://github.com/cubeplexai/cubeloop/compare/v0.15.2...v0.15.3
