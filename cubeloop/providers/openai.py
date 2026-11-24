@@ -110,7 +110,7 @@ class OpenAIProvider(BaseProvider):
                     "content": system_prompt,
                 }
             )
-        api_messages.extend(self._convert_message(m) for m in messages)
+        api_messages.extend(self._convert_messages(messages))
 
         kwargs: dict[str, Any] = {
             "model": model.id,
@@ -642,6 +642,53 @@ class OpenAIProvider(BaseProvider):
         return body
 
     @staticmethod
+    def _image_part(img: ImageContent) -> dict[str, Any]:
+        return {
+            "type": "image_url",
+            "image_url": {"url": f"data:{img.media_type};base64,{img.source}"},
+        }
+
+    @classmethod
+    def _convert_messages(cls, messages: list[Message]) -> list[dict[str, Any]]:
+        """Convert cubeloop messages to OpenAI Chat Completions format.
+
+        Chat Completions ``role: "tool"`` messages only carry text reliably
+        across OpenAI-compatible endpoints. Any ``ImageContent`` blocks in
+        consecutive ``ToolResultMessage`` entries are collected and emitted in
+        a single synthetic ``role: "user"`` message immediately after the
+        contiguous ``tool`` block so every ``tool_call_id`` stays adjacent to
+        its ``assistant`` ``tool_calls`` turn.
+        """
+        api_messages: list[dict[str, Any]] = []
+        pending_images: list[dict[str, Any]] = []
+
+        def _flush_pending_images() -> None:
+            if pending_images:
+                api_messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Images from tool results:"},
+                            *pending_images,
+                        ],
+                    }
+                )
+                pending_images.clear()
+
+        for msg in messages:
+            if isinstance(msg, ToolResultMessage):
+                api_messages.append(cls._convert_message(msg))
+                for c in msg.content:
+                    if isinstance(c, ImageContent):
+                        pending_images.append(cls._image_part(c))
+            else:
+                _flush_pending_images()
+                api_messages.append(cls._convert_message(msg))
+
+        _flush_pending_images()
+        return api_messages
+
+    @staticmethod
     def _convert_message(msg: Message) -> dict[str, Any]:
         if isinstance(msg, UserMessage):
             attributed = apply_sender_attribution(msg, msg.content)
@@ -652,14 +699,7 @@ class OpenAIProvider(BaseProvider):
                     if isinstance(c, TextContent):
                         parts.append({"type": "text", "text": c.text})
                     elif isinstance(c, ImageContent):
-                        parts.append(
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{c.media_type};base64,{c.source}"
-                                },
-                            }
-                        )
+                        parts.append(OpenAIProvider._image_part(c))
                 return {"role": "user", "content": parts}
             text_parts = [c.text for c in attributed if isinstance(c, TextContent)]
             return {"role": "user", "content": "\n".join(text_parts)}

@@ -1560,3 +1560,41 @@ class TestAnthropicTypedErrorWrapping:
 
         assert len(captured_exc) == 1
         assert isinstance(captured_exc[0], ContextLengthExceeded)
+
+
+class TestAnthropicToolResultImages:
+    """ToolResultMessage ImageContent serialization in Anthropic Messages API."""
+
+    def test_image_content_in_tool_result(self):
+        msg = ToolResultMessage(
+            tool_call_id="toolu_123",
+            tool_name="view_images",
+            content=[
+                TextContent(text="Loaded 1 image(s):"),
+                ImageContent(source="imgb64", media_type="image/jpeg"),
+            ],
+        )
+
+        result = AnthropicProvider._convert_message(msg)
+
+        assert result == {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_123",
+                    "content": [
+                        {"type": "text", "text": "Loaded 1 image(s):"},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/jpeg",
+                                "data": "imgb64",
+                            },
+                        },
+                    ],
+                    "is_error": False,
+                }
+            ],
+        }

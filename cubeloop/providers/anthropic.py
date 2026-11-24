@@ -446,6 +446,17 @@ class AnthropicProvider(BaseProvider):
         return messages
 
     @staticmethod
+    def _image_block(img: ImageContent) -> dict[str, Any]:
+        return {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": img.media_type,
+                "data": img.source,
+            },
+        }
+
+    @staticmethod
     def _convert_message(msg: Message) -> dict[str, Any]:
         if isinstance(msg, UserMessage):
             user_content: list[dict[str, Any]] = []
@@ -454,16 +465,7 @@ class AnthropicProvider(BaseProvider):
                 if isinstance(user_block, TextContent):
                     user_content.append({"type": "text", "text": user_block.text})
                 elif isinstance(user_block, ImageContent):
-                    user_content.append(
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": user_block.media_type,
-                                "data": user_block.source,
-                            },
-                        }
-                    )
+                    user_content.append(AnthropicProvider._image_block(user_block))
             return {"role": "user", "content": user_content}
 
         elif isinstance(msg, AssistantMessage):
@@ -499,10 +501,12 @@ class AnthropicProvider(BaseProvider):
             return {"role": "assistant", "content": assistant_content}
 
         elif isinstance(msg, ToolResultMessage):
-            tool_content = []
+            tool_content: list[dict[str, Any]] = []
             for c in msg.content:
                 if isinstance(c, TextContent):
                     tool_content.append({"type": "text", "text": c.text})
+                elif isinstance(c, ImageContent):
+                    tool_content.append(AnthropicProvider._image_block(c))
             return {
                 "role": "user",
                 "content": [

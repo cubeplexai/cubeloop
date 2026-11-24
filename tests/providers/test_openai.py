@@ -1058,3 +1058,68 @@ class TestOpenAITypedErrorWrapping:
 
         assert len(captured_exc) == 1
         assert isinstance(captured_exc[0], ContextLengthExceeded)
+
+
+class TestOpenAIToolResultImages:
+    """ToolResultMessage ImageContent serialization in Chat Completions."""
+
+    def test_tool_result_images_flushed_after_consecutive_tool_messages(self):
+        messages = [
+            AssistantMessage(
+                content=[
+                    ToolCall(
+                        id="call_1", name="view_images", arguments={"paths": ["a.png"]}
+                    ),
+                    ToolCall(id="call_2", name="read", arguments={"path": "b.txt"}),
+                ]
+            ),
+            ToolResultMessage(
+                tool_call_id="call_1",
+                tool_name="view_images",
+                content=[
+                    TextContent(text="Loaded 1 image(s):"),
+                    ImageContent(source="imgdata1", media_type="image/jpeg"),
+                ],
+            ),
+            ToolResultMessage(
+                tool_call_id="call_2",
+                tool_name="read",
+                content=[TextContent(text="file contents")],
+            ),
+        ]
+
+        converted = OpenAIProvider._convert_messages(messages)
+
+        assert [m["role"] for m in converted] == ["assistant", "tool", "tool", "user"]
+        assert converted[1] == {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "content": "Loaded 1 image(s):",
+        }
+        assert converted[2] == {
+            "role": "tool",
+            "tool_call_id": "call_2",
+            "content": "file contents",
+        }
+        assert converted[3]["content"] == [
+            {"type": "text", "text": "Images from tool results:"},
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/jpeg;base64,imgdata1"},
+            },
+        ]
+
+    def test_text_only_tool_result_adds_no_user_message(self):
+        messages = [
+            AssistantMessage(
+                content=[ToolCall(id="call_1", name="echo", arguments={})]
+            ),
+            ToolResultMessage(
+                tool_call_id="call_1",
+                tool_name="echo",
+                content=[TextContent(text="ok")],
+            ),
+        ]
+
+        converted = OpenAIProvider._convert_messages(messages)
+        assert [m["role"] for m in converted] == ["assistant", "tool"]
