@@ -660,27 +660,32 @@ class OpenAIProvider(BaseProvider):
         its ``assistant`` ``tool_calls`` turn.
         """
         api_messages: list[dict[str, Any]] = []
-        pending_images: list[dict[str, Any]] = []
+        pending_image_parts: list[dict[str, Any]] = []
 
         def _flush_pending_images() -> None:
-            if pending_images:
+            if pending_image_parts:
                 api_messages.append(
                     {
                         "role": "user",
-                        "content": [
-                            {"type": "text", "text": "Images from tool results:"},
-                            *pending_images,
-                        ],
+                        "content": list(pending_image_parts),
                     }
                 )
-                pending_images.clear()
+                pending_image_parts.clear()
 
         for msg in messages:
             if isinstance(msg, ToolResultMessage):
                 api_messages.append(cls._convert_message(msg))
-                for c in msg.content:
-                    if isinstance(c, ImageContent):
-                        pending_images.append(cls._image_part(c))
+                imgs = [c for c in msg.content if isinstance(c, ImageContent)]
+                if imgs:
+                    label = (
+                        f"{msg.tool_name} ({msg.tool_call_id})"
+                        if msg.tool_name
+                        else msg.tool_call_id
+                    )
+                    pending_image_parts.append(
+                        {"type": "text", "text": f"Images from {label}:"}
+                    )
+                    pending_image_parts.extend(cls._image_part(img) for img in imgs)
             else:
                 _flush_pending_images()
                 api_messages.append(cls._convert_message(msg))

@@ -630,6 +630,13 @@ class OpenAIResponsesProvider(BaseProvider):
         return reason
 
     @staticmethod
+    def _image_part(img: ImageContent) -> dict[str, Any]:
+        return {
+            "type": "input_image",
+            "image_url": f"data:{img.media_type};base64,{img.source}",
+        }
+
+    @staticmethod
     def _build_input(messages: list[Message]) -> list[dict[str, Any]]:
         """Convert cubepi messages to OpenAI Responses API input format."""
         api_input: list[dict[str, Any]] = []
@@ -642,12 +649,7 @@ class OpenAIResponsesProvider(BaseProvider):
                     if isinstance(c, TextContent):
                         content.append({"type": "input_text", "text": c.text})
                     elif isinstance(c, ImageContent):
-                        content.append(
-                            {
-                                "type": "input_image",
-                                "image_url": f"data:{c.media_type};base64,{c.source}",
-                            }
-                        )
+                        content.append(OpenAIResponsesProvider._image_part(c))
                 if content:
                     api_input.append({"role": "user", "content": content})
 
@@ -707,12 +709,7 @@ class OpenAIResponsesProvider(BaseProvider):
                         if isinstance(c, TextContent):
                             output_parts.append({"type": "input_text", "text": c.text})
                         elif isinstance(c, ImageContent):
-                            output_parts.append(
-                                {
-                                    "type": "input_image",
-                                    "image_url": f"data:{c.media_type};base64,{c.source}",
-                                }
-                            )
+                            output_parts.append(OpenAIResponsesProvider._image_part(c))
                     output: str | list[dict[str, Any]] = output_parts
                 else:
                     text_parts = [
